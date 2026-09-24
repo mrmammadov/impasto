@@ -1,0 +1,16 @@
+{
+  "name": "loose-brush",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Repaints any picture as a loose oil sketch, stroke by stroke, in the browser.",
+  "scripts": {
+    "dev": "npx --yes serve . -l 5173",
+    "build": "node build.mjs",
+    "build:min": "node build.mjs --minify",
+    "typecheck": "npx --yes -p typescript tsc -p jsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
