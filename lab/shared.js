@@ -31,7 +31,7 @@ export async function paintInto(img, canvas, presetId, longSide, status) {
   const p = PRESETS.find((x) => x.id === presetId) || PRESETS[0];
   const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
   return paint({
-    ctx, image: img, params: p.params, style: STYLES[p.style], seed: 7, longSide, focusPoint: null,
+    ctx, image: img, params: p.params, style: STYLES[p.style], seed: 7, longSide,
     onProgress: (_f, msg) => status(msg),
   });
 }

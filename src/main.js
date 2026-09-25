@@ -1,6 +1,6 @@
 // @ts-check
 // UI wiring only. Painting lives in painter.js, looks live in styles/, choices in presets.js.
-import { paint, focusRingWidth, outputSize } from './painter.js';
+import { paint, outputSize } from './painter.js';
 import { STYLES } from './styles/index.js';
 import { PRESETS, DEFAULT_PRESET } from './presets.js';
 import { withHeight, paintTexture } from './height.js';
@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('paint'));
 const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
-const statusEl = $('status'), barEl = $('bar'), ring = $('ring'), originalEl = $('original');
+const statusEl = $('status'), barEl = $('bar'), originalEl = $('original');
 const viewCanvas = /** @type {HTMLCanvasElement} */ ($('view'));
 const frameEl = $('frame'), pic = $('pic');
 const heightCanvas = document.createElement('canvas');
@@ -24,8 +24,6 @@ const heightCanvas = document.createElement('canvas');
 let image = null;
 let seed = 7;
 let job = 0;
-/** @type {{x: number, y: number} | null} */
-let focusPoint = null;
 let presetId = DEFAULT_PRESET;
 let customised = false;
 /** @type {any} */
@@ -85,7 +83,6 @@ function selectPreset(id) {
   customised = false;
   writeParams(p.params);
   renderPresets();
-  updateFocusUi();
   run();
 }
 function currentStyle() {
@@ -112,7 +109,6 @@ async function run() {
     style: currentStyle(),
     seed,
     longSide,
-    focusPoint,
     onProgress: (f, msg) => {
       if (my !== job) return;
       barEl.style.width = `${Math.round(f * 100)}%`;
@@ -121,25 +117,26 @@ async function run() {
     isCancelled: () => my !== job,
   });
   if (result && my === job) {
-    statusEl.textContent = `${result.strokes.toLocaleString()} strokes in ${result.seconds.toFixed(1)} s. Tap the painting to move the small brush.`;
-    updateFocusUi();
+    statusEl.textContent = `${result.strokes.toLocaleString()} strokes in ${result.seconds.toFixed(1)} s.`;
     if (viewer) {
       viewer.setPainting(canvas, paintTexture(heightCanvas));
       showView(true);
-      if (depthOn && !depth) computeDepth();
+      if (view === '3d' && !depth) computeDepth();
     }
   }
 }
 
-// ---------- view: relief, gold frame and 3D, drawn by the WebGL viewer over the finished painting
+// ---------- view: Flat, Relief or 3D, drawn by the WebGL viewer over the finished painting
 const viewer = createViewer(viewCanvas);
 const tilt = createTilt($('stage'));
-let reliefOn = true, frameOn = true, depthOn = false, viewShown = false, dirty = true, depthBusy = false;
+/** @type {'flat' | 'relief' | '3d'} */
+let view = 'relief';
+let viewShown = false, dirty = true, depthBusy = false;
 /** @type {{data: Uint8Array, width: number, height: number} | null} */
 let depth = null;
-if (!viewer) $('reliefBtn').closest('.group').hidden = true; // no WebGL: the flat painting only
+if (!viewer) { $('viewGroup').hidden = true; $('viewFine').hidden = true; } // no WebGL: the flat painting only
 
-const moving = () => reliefOn || (depthOn && !!depth);
+const moving = () => view !== 'flat';
 
 /** @param {boolean} on */
 function showView(on) {
@@ -153,30 +150,50 @@ function placeOverlays() {
   const inset = viewShown && viewer ? viewer.inset() : { x: 0, y: 0 };
   pic.style.setProperty('--ix', `${inset.x * 100}%`);
   pic.style.setProperty('--iy', `${inset.y * 100}%`);
-  frameEl.classList.toggle('lit', viewShown && moving());
+  frameEl.classList.toggle('lit', viewShown && view === 'relief'); // the card tilts as an object; 3D is a window, it stays put
 }
 function updateView() {
-  $('reliefBtn').setAttribute('aria-pressed', String(reliefOn));
-  $('frameBtn').setAttribute('aria-pressed', String(frameOn));
-  $('depthBtn').setAttribute('aria-pressed', String(depthOn));
-  $('reliefCtl').hidden = !reliefOn;
-  $('depthCtl').hidden = !depthOn;
+  for (const b of $('viewSeg').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === view));
+  // Relief is the painting as an object (paint, frame, moving light); 3D is a window into the
+  // scene. Mixed, the paint would slide across its own canvas, so each mode has its own controls.
+  $('reliefCtl').hidden = view !== 'relief';
+  $('frameCtl').hidden = view === '3d';
+  $('depthCtl').hidden = view !== '3d';
   $('reliefOut').textContent = `${Math.round((parseFloat($('relief').value) / 1.5) * 100)}%`;
-  $('depthOut').textContent = `${Math.round((parseFloat($('depthAmt').value) / 0.025) * 100)}%`;
+  $('depthOut').textContent = `${Math.round((parseFloat($('depthAmt').value) / 0.035) * 100)}%`;
   viewer?.setOptions({
-    relief: reliefOn ? parseFloat($('relief').value) : 0,
-    frame: frameOn,
-    depth: depthOn ? parseFloat($('depthAmt').value) : 0,
+    relief: view === 'relief' ? parseFloat($('relief').value) : 0,
+    frame: view !== '3d' && $('frameOn').checked,
+    depth: view === '3d' ? parseFloat($('depthAmt').value) : 0,
   });
   placeOverlays();
   dirty = true;
 }
 
+// the 3D model is a one-time download: ask the first time, then remember the answer
+const DEPTH_OK = 'loose-brush:3d-ok';
+const depthAllowed = () => { try { return localStorage.getItem(DEPTH_OK) === '1'; } catch { return false; } };
+
+/** @param {'flat' | 'relief' | '3d'} next */
+function setView(next) {
+  tilt.requestGyro();
+  $('depthConfirm').hidden = true;
+  if (next === '3d' && !depth && !depthAllowed()) { $('depthConfirm').hidden = false; return; }
+  view = next;
+  updateView();
+  if (view === '3d' && !depth) computeDepth();
+}
+for (const b of $('viewSeg').querySelectorAll('button')) b.addEventListener('click', () => setView(b.dataset.view));
+$('depthGo').addEventListener('click', () => {
+  try { localStorage.setItem(DEPTH_OK, '1'); } catch { /* asks again next visit */ }
+  setView('3d');
+});
+$('depthCancel').addEventListener('click', () => { $('depthConfirm').hidden = true; });
+
 async function computeDepth() {
   if (!image || depthBusy) return;
   const img = image;
   depthBusy = true;
-  $('depthBtn').disabled = true;
   try {
     const { W, H } = outputSize(img, parseInt($('quality').value, 10));
     const photo = document.createElement('canvas');
@@ -190,27 +207,25 @@ async function computeDepth() {
     statusEl.textContent = '3D ready. Move over the painting, or tilt your phone.';
   } catch (err) {
     console.error(err);
-    depthOn = false;
+    if (view === '3d') view = 'relief';
     statusEl.textContent = '3D could not load here. Check your connection, or try Chrome or Safari.';
   } finally {
     depthBusy = false;
-    $('depthBtn').disabled = false;
     updateView();
-    if (depthOn && !depth && image !== img) computeDepth();
+    if (view === '3d' && !depth && image !== img) computeDepth();
   }
 }
 
-$('reliefBtn').addEventListener('click', () => { tilt.requestGyro(); reliefOn = !reliefOn; updateView(); });
-$('frameBtn').addEventListener('click', () => { frameOn = !frameOn; updateView(); });
-$('depthBtn').addEventListener('click', () => {
-  tilt.requestGyro();
-  depthOn = !depthOn;
-  updateView();
-  if (depthOn && !depth) computeDepth();
-});
+$('frameOn').addEventListener('change', updateView);
 $('relief').addEventListener('input', updateView);
 $('depthAmt').addEventListener('input', updateView);
 document.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') tilt.requestGyro(); });
+
+// fine-tune stays open or closed the way the viewer left it
+try { $('fine').open = localStorage.getItem('loose-brush:fine') === '1'; } catch { /* closed */ }
+$('fine').addEventListener('toggle', () => {
+  try { localStorage.setItem('loose-brush:fine', $('fine').open ? '1' : '0'); } catch { /* not remembered */ }
+});
 
 /** @param {number} now */
 function frame(now) {
@@ -241,8 +256,6 @@ function loadSrc(url) {
     originalEl.src = url;
     depth = null;
     viewer?.setDepth(null);
-    focusPoint = null;
-    updateFocusUi();
     run();
   };
   img.onerror = () => { statusEl.textContent = 'That file could not be opened as a picture. Try a JPEG or PNG.'; };
@@ -256,6 +269,7 @@ function loadFile(file) {
   }
   const fr = new FileReader();
   fr.onload = () => loadSrc(String(fr.result));
+  $('dropHint').hidden = true; // they've found how to add a picture
   fr.readAsDataURL(file);
 }
 $('file').addEventListener('change', (e) => loadFile(e.target.files[0]));
@@ -268,35 +282,10 @@ stage.addEventListener('drop', (e) => {
   loadFile(e.dataTransfer.files[0]);
 });
 
-// ---------- small-brush focus
-function updateFocusUi() {
-  const sharp = parseFloat(sliders.sharp[0].value);
-  if (focusPoint && sharp > 0) {
-    ring.style.display = 'block';
-    ring.style.left = `${focusPoint.x * 100}%`;
-    ring.style.top = `${focusPoint.y * 100}%`;
-    ring.style.width = `${focusRingWidth(sharp, canvas.width, canvas.height) * 100}%`;
-    $('focusHint').textContent = 'The small brush works inside the ring. Tap elsewhere to move it.';
-    $('autoFocus').hidden = false;
-  } else {
-    ring.style.display = 'none';
-    $('focusHint').textContent = 'Placed automatically on the busiest part of the picture. Tap the painting to choose the spot yourself.';
-    $('autoFocus').hidden = !focusPoint;
-  }
-}
-pic.addEventListener('click', (e) => {
-  const r = pic.getBoundingClientRect();
-  focusPoint = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
-  if (parseFloat(sliders.sharp[0].value) === 0) sliders.sharp[0].value = '0.12';
-  updateFocusUi();
-  run();
-});
-$('autoFocus').addEventListener('click', () => { focusPoint = null; updateFocusUi(); run(); });
-
 // ---------- controls
 for (const key of /** @type {(keyof BrushParams)[]} */ (Object.keys(sliders))) {
   const input = sliders[key][0];
-  input.addEventListener('input', () => { readParams(); if (key === 'sharp') updateFocusUi(); });
+  input.addEventListener('input', readParams);
   input.addEventListener('change', () => { customised = true; renderPresets(); run(); });
 }
 $('quality').addEventListener('change', run);
@@ -348,6 +337,28 @@ $('save').addEventListener('click', () => {
     if (tries === 4) $('save').hidden = false; // no claude.ai host: plain browser download
   }
 })();
+
+// ---------- light / dark: follows the system until the viewer picks one, then remembers it
+const THEME = 'loose-brush:theme';
+const systemDark = matchMedia('(prefers-color-scheme: dark)');
+const themeBtn = $('theme');
+const ICON = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const MOON = ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>');
+const SUN = ICON('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>');
+const isDark = () => (document.documentElement.dataset.theme || (systemDark.matches ? 'dark' : 'light')) === 'dark';
+function showThemeIcon() {
+  const dark = isDark();
+  themeBtn.innerHTML = dark ? SUN : MOON;
+  themeBtn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+}
+themeBtn.addEventListener('click', () => {
+  const next = isDark() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEME, next); } catch { /* this visit only */ }
+  showThemeIcon();
+});
+systemDark.addEventListener('change', showThemeIcon);
+showThemeIcon();
 
 // ---------- start
 const startPreset = PRESETS.find((p) => p.id === DEFAULT_PRESET) || PRESETS[0];

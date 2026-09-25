@@ -6,6 +6,7 @@
 <title>Loose Brush</title>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<script>try { var t = localStorage.getItem('loose-brush:theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body>
 <div class="app">
@@ -13,66 +14,71 @@
     <div class="frame" id="frame">
       <canvas id="paint" width="800" height="1200" aria-label="The painting"></canvas>
       <canvas id="view" hidden aria-label="The painting, lit and framed"></canvas>
-      <div class="pic" id="pic">
-        <img id="original" alt="The original picture">
-        <div class="ring" id="ring"></div>
-      </div>
+      <div class="pic" id="pic"><img id="original" alt="The original picture"></div>
     </div>
     <div class="bar" aria-hidden="true"><i id="bar"></i></div>
     <div class="status" id="status" role="status" aria-live="polite">Loading…</div>
+    <div class="tools">
+      <button type="button" id="compare">Hold to compare</button>
+      <button type="button" id="reseed">New strokes</button>
+      <button type="button" class="primary" id="save" hidden>Save image</button>
+    </div>
   </main>
   <aside class="rail">
     <div>
-      <h1>Loose Brush</h1>
-      <p class="lede">Repaints any picture as a loose oil sketch. Big brushes cover everything; a small brush goes only where you want detail. Move over the painting, or tilt your phone, to see the paint catch the light.</p>
+      <div class="head">
+        <h1>Loose Brush</h1>
+        <button type="button" class="icon" id="theme" aria-label="Switch to dark mode"></button>
+      </div>
+      <p class="lede">Turn any photo into an oil painting.</p>
+    </div>
+    <div class="group">
+      <label class="filebtn primary">Choose a picture<input type="file" id="file" accept="image/*"></label>
+      <p class="hint" id="dropHint">Or drop one onto the painting.</p>
     </div>
     <div class="group">
       <h2>Style</h2>
-      <div class="presets" id="presets" role="radiogroup" aria-label="Style presets"></div>
+      <div class="presets" id="presets" role="radiogroup" aria-label="Style"></div>
       <p class="hint" id="presetNote"></p>
     </div>
-    <div class="group">
+    <div class="group" id="viewGroup">
       <h2>View</h2>
-      <div class="presets" role="group" aria-label="View">
-        <button type="button" class="preset" id="reliefBtn" aria-pressed="true">Relief</button>
-        <button type="button" class="preset" id="frameBtn" aria-pressed="true">Gold frame</button>
-        <button type="button" class="preset" id="depthBtn" aria-pressed="false">3D</button>
+      <div class="seg" id="viewSeg" role="radiogroup" aria-label="View">
+        <button type="button" role="radio" data-view="flat" aria-checked="false">Flat</button>
+        <button type="button" role="radio" data-view="relief" aria-checked="true">Relief</button>
+        <button type="button" role="radio" data-view="3d" aria-checked="false">3D</button>
       </div>
-      <div class="ctl" id="reliefCtl"><label for="relief">Paint thickness</label><output id="reliefOut"></output><input type="range" id="relief" min="0.25" max="4" step="0.25" value="1.5"></div>
-      <div class="ctl" id="depthCtl" hidden><label for="depthAmt">Depth</label><output id="depthOut"></output><input type="range" id="depthAmt" min="0.005" max="0.06" step="0.005" value="0.025"></div>
-      <p class="hint" id="viewHint">3D downloads a depth model the first time (about 100 MB). Your picture still stays on your device.</p>
-    </div>
-    <div class="group">
-      <h2>Picture</h2>
-      <div class="row">
-        <label class="filebtn">Choose a picture<input type="file" id="file" accept="image/*"></label>
-        <button type="button" id="compare">Hold to compare</button>
-      </div>
-      <p class="hint">Or drop one onto the canvas. Pictures with big, clear shapes paint best.</p>
-    </div>
-    <div class="group">
-      <h2>Brush</h2>
-      <div class="ctl"><label for="size">Brush size</label><output id="sizeOut"></output><input type="range" id="size" min="0.5" max="2" step="0.05"></div>
-      <div class="ctl"><label for="detail">Detail</label><output id="detailOut"></output><input type="range" id="detail" min="0" max="1" step="0.05"></div>
-      <div class="ctl"><label for="length">Stroke length</label><output id="lengthOut"></output><input type="range" id="length" min="0.4" max="2" step="0.05"></div>
-      <div class="ctl"><label for="dry">Dry brush</label><output id="dryOut"></output><input type="range" id="dry" min="0" max="1" step="0.05"></div>
-    </div>
-    <div class="group">
-      <h2>Small brush</h2>
-      <div class="ctl"><label for="sharp">Sharp area</label><output id="sharpOut"></output><input type="range" id="sharp" min="0" max="0.4" step="0.01"></div>
-      <p class="hint" id="focusHint">Placed automatically on the busiest part of the picture. Tap the painting to choose the spot yourself.</p>
-      <button type="button" class="linkbtn" id="autoFocus" hidden>Place automatically</button>
-    </div>
-    <div class="group">
-      <h2>Output</h2>
-      <div class="ctl"><label for="quality">Size (long side)</label><output></output>
-        <select id="quality"><option value="1200">1200 px, fastest</option><option value="1600" selected>1600 px</option><option value="2400">2400 px, slowest</option></select>
-      </div>
-      <div class="row">
-        <button type="button" id="reseed">New strokes</button>
-        <button type="button" class="primary" id="save" hidden>Save PNG</button>
+      <div class="confirm" id="depthConfirm" hidden>
+        <p class="hint">3D needs a one-time download of about 100 MB. Your picture stays on your device.</p>
+        <div class="row">
+          <button type="button" class="primary" id="depthGo">Download</button>
+          <button type="button" id="depthCancel">Not now</button>
+        </div>
       </div>
     </div>
+    <details class="fine" id="fine">
+      <summary>Fine-tune</summary>
+      <div class="group">
+        <h3>Brush</h3>
+        <div class="ctl"><label for="size">Brush size</label><output id="sizeOut"></output><input type="range" id="size" min="0.5" max="2" step="0.05"></div>
+        <div class="ctl"><label for="detail">Detail</label><output id="detailOut"></output><input type="range" id="detail" min="0" max="1" step="0.05"></div>
+        <div class="ctl"><label for="length">Stroke length</label><output id="lengthOut"></output><input type="range" id="length" min="0.4" max="2" step="0.05"></div>
+        <div class="ctl"><label for="dry">Dry brush</label><output id="dryOut"></output><input type="range" id="dry" min="0" max="1" step="0.05"></div>
+        <div class="ctl"><label for="sharp">Sharp area</label><output id="sharpOut"></output><input type="range" id="sharp" min="0" max="0.4" step="0.01"></div>
+      </div>
+      <div class="group" id="viewFine">
+        <h3>View</h3>
+        <label class="check" id="frameCtl"><input type="checkbox" id="frameOn" checked> Gold frame</label>
+        <div class="ctl" id="reliefCtl"><label for="relief">Paint thickness</label><output id="reliefOut"></output><input type="range" id="relief" min="0.25" max="4" step="0.25" value="1.5"></div>
+        <div class="ctl" id="depthCtl"><label for="depthAmt">3D depth</label><output id="depthOut"></output><input type="range" id="depthAmt" min="0.01" max="0.07" step="0.005" value="0.035"></div>
+      </div>
+      <div class="group">
+        <h3>Output</h3>
+        <div class="ctl"><label for="quality">Size (long side)</label><output></output>
+          <select id="quality"><option value="1200">1200 px, fastest</option><option value="1600" selected>1600 px</option><option value="2400">2400 px, slowest</option></select>
+        </div>
+      </div>
+    </details>
     <p class="foot">Everything runs in your browser. Your picture is never uploaded.</p>
   </aside>
 </div>

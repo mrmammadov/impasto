@@ -44,7 +44,7 @@ export function outputSize(image, longSide) {
  * @returns {Promise<PaintResult | null>}
  */
 export async function paint(job) {
-  const { ctx, image, params, style, seed, longSide, focusPoint } = job;
+  const { ctx, image, params, style, seed, longSide } = job;
   const onProgress = job.onProgress || (() => {});
   const cancelled = job.isCancelled || (() => false);
   const t0 = performance.now();
@@ -82,7 +82,7 @@ export async function paint(job) {
   ctx.fillRect(0, 0, W, H);
 
   // --- where the small brush may work
-  const focus = params.sharp > 0 ? focusMask(L, W, H, k, params.sharp, focusPoint, rng) : null;
+  const focus = params.sharp > 0 ? focusMask(L, W, H, k, params.sharp, rng) : null;
 
   const flowK = Math.max(k, 0.2);
   /** @param {number} x @param {number} y */
@@ -191,21 +191,10 @@ function strokePath(x0, y0, rad, maxLen, c, rr, rg, rb, cur, gx, gy, W, H, flow)
   return pts;
 }
 
-/**
- * Pixels the small brush may touch: a circle around the chosen point, or the busiest
- * `sharp` fraction of the picture when no point is chosen.
- */
-function focusMask(L, W, H, k, sharp, focusPoint, rng) {
+/** Pixels the small brush may touch: the busiest `sharp` fraction of the picture. */
+function focusMask(L, W, H, k, sharp, rng) {
   const N = W * H;
   const mask = new Uint8Array(N);
-  if (focusPoint) {
-    const fx = focusPoint.x * W, fy = focusPoint.y * H;
-    const r2 = (sharp * N) / Math.PI;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      if ((x - fx) ** 2 + (y - fy) ** 2 < r2) mask[y * W + x] = 1;
-    }
-    return mask;
-  }
   const [sx, sy] = sobel(blur(L, W, H, Math.max(2, 4 * k)), W, H);
   const mag = new Float32Array(N);
   for (let i = 0; i < N; i++) mag[i] = Math.hypot(sx[i], sy[i]);
@@ -216,9 +205,4 @@ function focusMask(L, W, H, k, sharp, focusPoint, rng) {
   const thr = sample[Math.floor((1 - sharp) * (sample.length - 1))];
   for (let i = 0; i < N; i++) if (sal[i] >= thr) mask[i] = 1;
   return mask;
-}
-
-/** Pixel radius of the focus ring for a given sharp fraction, as a share of canvas width. */
-export function focusRingWidth(sharp, W, H) {
-  return (2 * Math.sqrt((sharp * W * H) / Math.PI)) / W;
 }

@@ -56,7 +56,6 @@
  * @property {BrushStyle} style
  * @property {number} seed
  * @property {number} longSide                        Output size of the longest side, in pixels.
- * @property {{x: number, y: number} | null} focusPoint  Normalised 0–1, or null for automatic.
  * @property {(fraction: number, message: string) => void} [onProgress]
  * @property {() => boolean} [isCancelled]
  */
