@@ -15,10 +15,15 @@ src/
   image-ops.js        helpers: seeded random, blur, Sobel gradients
   presets.js          the preset list (plain data)
   types.js            JSDoc type definitions (BrushStyle, Preset, BrushParams, ...)
+  height.js           records paint thickness while the painter works (for the relief)
+  viewer.js           WebGL view of the finished painting: relief lighting, gold frame, 3D parallax
+  tilt.js             pointer / gyroscope / idle-wobble tilt that drives the light and 3D
+  depth.js            3D: depth from the photo (Depth Anything, in the browser, loaded on first use)
   styles/
     index.js          style registry
     oil.js            bristle brush + canvas surface finish
     knife.js          palette knife
+lab/                  throwaway experiments (not part of the build)
 build.mjs             bundles everything into dist/loose-brush.html (one file)
 ```
 

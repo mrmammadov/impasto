@@ -29,9 +29,19 @@ body {
   background: var(--stage); display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 14px; padding: 28px; min-width: 0; position: relative;
 }
+@media (min-width: 861px) {
+  /* the rail can be taller than the window: keep the painting centred in view while it scrolls */
+  .stage { position: sticky; top: 0; height: 100vh; align-self: start; }
+}
 .stage.dragging { outline: 3px dashed var(--accent); outline-offset: -14px; }
 .frame { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
-#paint {
+.frame.lit {
+  transform: perspective(1100px) rotateX(calc(var(--ry, 0) * -4deg)) rotateY(calc(var(--rx, 0) * 4deg));
+  box-shadow: calc(var(--rx, 0) * -5px) calc(18px + var(--ry, 0) * -5px) 40px -10px rgb(0 0 0 / 0.45);
+}
+.pic { position: absolute; inset: var(--iy, 0%) var(--ix, 0%); cursor: crosshair; }
+[hidden] { display: none !important; }
+#paint, #view {
   display: block; max-width: 100%; max-height: calc(100vh - 140px); width: auto; height: auto;
   cursor: crosshair; background: #161a24;
 }
@@ -82,7 +92,7 @@ button:focus-visible, .filebtn:focus-within, input:focus-visible, select:focus-v
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
   .rail { border-left: 0; border-top: 1px solid var(--line); }
-  #paint { max-height: 68vh; }
+  #paint, #view { max-height: 68vh; }
   .stage { padding: 18px; }
 }
 @media (prefers-reduced-motion: reduce) { .bar > i, #original { transition: none; } }
@@ -92,4 +102,4 @@ button:focus-visible, .filebtn:focus-within, input:focus-visible, select:focus-v
   flex: 0 0 auto; padding: 7px 12px; border-radius: 999px; font-size: 13.5px;
   background: transparent; border: 1px solid var(--line); color: var(--ink);
 }
-.preset[aria-checked="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.preset[aria-checked="true"], .preset[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }

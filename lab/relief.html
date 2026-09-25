@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab: Paint Relief</title>
+<link rel="stylesheet" href="lab.css">
+<style>
+  .stage { perspective: 1100px; }
+  .card {
+    line-height: 0; border-radius: 2px; overflow: hidden;
+    transform: rotateX(calc(var(--ry, 0) * -1deg)) rotateY(calc(var(--rx, 0) * 1deg));
+    box-shadow: calc(var(--rx, 0) * -1.2px) calc(18px + var(--ry, 0) * -1.2px) 40px -8px rgb(0 0 0 / 0.45);
+  }
+  #gl { max-width: min(62vw, 560px); max-height: 80vh; width: auto; height: auto; display: block; }
+  @media (max-width: 760px) { #gl { max-width: calc(100vw - 32px); } }
+</style>
+</head>
+<body>
+<main class="stage" id="stage"><div class="card" id="card"><canvas id="gl" width="400" height="600"></canvas></div></main>
+<aside>
+  <h1>Lab 3: paint relief</h1>
+  <p>Every stroke also lays down paint thickness. The light follows the pointer, so ridges catch it and grooves fall into shadow.</p>
+  <label>Preset <select id="preset"></select></label>
+  <label>Picture <input type="file" id="file" accept="image/*"></label>
+  <label>Show
+    <select id="mode"><option value="0">Lit painting</option><option value="3">Flat painting</option><option value="1">Height map</option><option value="2">Surface normals</option></select>
+  </label>
+  <label>Frame
+    <select id="frameStyle"><option value="1">Gilded gold</option><option value="2">Dark walnut</option><option value="3">Satin black</option><option value="4">White gallery</option><option value="0">No frame</option></select>
+  </label>
+  <label>Paint thickness <output id="reliefOut"></output><input type="range" id="relief" min="0" max="6" step="0.25" value="1.5"></label>
+  <label>Light strength <output id="lightOut"></output><input type="range" id="light" min="0" max="1.5" step="0.05" value="0.7"></label>
+  <label>Gloss <output id="glossOut"></output><input type="range" id="gloss" min="0" max="1" step="0.05" value="0.45"></label>
+  <label>Card tilt <output id="angleOut"></output><input type="range" id="angle" min="0" max="12" step="1" value="4"></label>
+  <p id="status">Loading…</p>
+  <p class="kill"><b>Kill if</b> it reads as an emboss filter rather than paint catching the light, on both oil and palette knife.</p>
+</aside>
+<script type="module">
+import { SAMPLE, loadImage, fillPresets, paintInto, onPicture, trackTilt } from './shared.js';
+import { blur } from '../src/image-ops.js';
+
+const LONG_SIDE = 1200;
+const $ = (id) => document.getElementById(id);
+const status = (m) => { $('status').textContent = m; };
+
+// ---------- height capture
+// A stand-in for the painter's 2D context: every call goes to the real (colour) context, and
+// drawing calls are repeated on a height canvas where each mark adds a little thickness
+// ('lighter' blending, so overlapping paint piles up). Pixel reads and writes (the painter's
+// error check and the style's finishing pass) touch only the colour canvas.
+const COLOUR_ONLY = new Set(['getImageData', 'putImageData', 'createImageData', 'canvas']);
+function withHeight(ctx, hctx) {
+  hctx.globalCompositeOperation = 'lighter';
+  let first = true;
+  return new Proxy(ctx, {
+    get(target, key) {
+      const v = target[key];
+      if (typeof v !== 'function') return v;
+      if (COLOUR_ONLY.has(key)) return v.bind(target);
+      return (...args) => {
+        const r = v.apply(target, args);
+        if (key === 'fillRect' && first) { first = false; return r; } // the ground: no thickness
+        hctx[key](...args);
+        return r;
+      };
+    },
+    set(target, key, value) {
+      target[key] = value;
+      if (key === 'fillStyle') hctx.fillStyle = 'rgb(6,6,6)';           // a slab of paint
+      else if (key === 'strokeStyle') hctx.strokeStyle = 'rgb(3,3,3)';  // one bristle's line
+      else if (key !== 'globalCompositeOperation') hctx[key] = value;
+      return true;
+    },
+  });
+}
+
+/**
+ * Keep only the texture of the paint: subtract a blurred copy (the broad piles of many layers)
+ * and normalise, so every area has similar relief whether it got two strokes or twenty.
+ * @param {HTMLCanvasElement} c @returns {Uint8Array}
+ */
+function paintTexture(c) {
+  const W = c.width, H = c.height, N = W * H;
+  const d = c.getContext('2d').getImageData(0, 0, W, H).data;
+  const h = new Float32Array(N);
+  for (let i = 0; i < N; i++) h[i] = d[i * 4];
+  h.set(blur(h, W, H, 0.8)); // soften pixel steps so ridges look rounded, not engraved
+  const broad = blur(h, W, H, Math.max(3, 6 * Math.max(W, H) / 1200));
+  let sq = 0;
+  for (let i = 0; i < N; i++) { h[i] -= broad[i]; sq += h[i] * h[i]; }
+  const sd = Math.sqrt(sq / N) || 1;
+  const out = new Uint8Array(N);
+  for (let i = 0; i < N; i++) out[i] = Math.max(0, Math.min(255, 128 + (h[i] / sd) * 42));
+  return out;
+}
+
+// ---------- WebGL: light the painting using normals from the height map
+const gl = $('gl').getContext('webgl', { premultipliedAlpha: false });
+const VS = `attribute vec2 p; varying vec2 v_uv;
+  void main() { v_uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+const FS = `precision highp float;
+  varying vec2 v_uv;
+  uniform sampler2D u_img, u_h;
+  uniform vec2 u_px, u_tilt, u_size;
+  uniform float u_relief, u_light, u_gloss, u_frame;
+  uniform int u_mode, u_frameStyle;
+
+  vec2 puv;  // where this pixel falls on the painting (0–1)
+  float h(vec2 o) { return texture2D(u_h, puv + o * u_px).r; }
+
+  // ---- frame moulding: height across the frame, s = 0 at the outer edge, 1 at the painting
+  float bump(float s, float c, float w) { float d = (s - c) / w; return exp(-d * d); }
+  float profile(float s) {
+    return 0.7 * smoothstep(0.0, 0.14, s)        // rounded outer edge rising up
+         + 0.22 * bump(s, 0.33, 0.07)            // a bead
+         + 0.12 * bump(s, 0.47, 0.05)            // a smaller bead
+         - 0.55 * smoothstep(0.55, 0.88, s)      // cove sweeping down toward the picture
+         + 0.18 * bump(s, 0.93, 0.035);          // thin inner lip
+  }
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float noise(vec2 p) {
+    vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+  }
+
+  vec3 frameColour(vec2 pc, vec3 L) {
+    // the nearest outer edge decides which side of the frame this is; that gives mitred corners for free
+    float dl = pc.x, dr = u_size.x - pc.x, dt = pc.y, db = u_size.y - pc.y;
+    float m = min(min(dl, dr), min(dt, db));
+    vec2 outward = m == dl ? vec2(-1, 0) : m == dr ? vec2(1, 0) : m == dt ? vec2(0, -1) : vec2(0, 1);
+    float along = outward.x != 0.0 ? pc.y : pc.x;
+    float s = m / u_frame, e = 0.004;
+    float slope = (profile(s + e) - profile(s - e)) / (2.0 * e);   // height change moving inward
+    vec2 g = -outward * slope * 2.2;                               // gradient in image coords (y down)
+    // small irregularities so it doesn't look computer-perfect
+    float fine = noise(vec2(along * 0.15, s * 30.0));
+    g += (fine - 0.5) * 0.25 * vec2(outward.y, outward.x);
+    vec3 n = normalize(vec3(-g.x, g.y, 1.0));
+    float hgt = profile(s);
+    float ao = 0.55 + 0.45 * smoothstep(-0.3, 0.7, hgt);          // recesses get less light
+    float diff = max(dot(n, L), 0.0);
+    vec3 H = normalize(L + vec3(0, 0, 1));
+    float nh = max(dot(n, H), 0.0);
+
+    if (u_frameStyle == 1) {        // gilded gold, rubbed back a little on the high points
+      vec3 gold = mix(vec3(0.55, 0.38, 0.14), vec3(0.86, 0.68, 0.36), fine);
+      gold = mix(gold, vec3(0.35, 0.2, 0.12), smoothstep(0.75, 0.95, noise(vec2(along * 0.04, s * 6.0))) * 0.5);
+      return gold * ao * (0.25 + 0.95 * diff) + vec3(1.0, 0.85, 0.55) * pow(nh, 28.0) * 0.9 * ao;
+    }
+    if (u_frameStyle == 2) {        // dark walnut: grain runs along each side
+      float grain = noise(vec2(along * 0.01, s * 40.0 + noise(vec2(along * 0.02, s * 3.0)) * 6.0));
+      vec3 wood = mix(vec3(0.16, 0.09, 0.05), vec3(0.34, 0.2, 0.11), grain);
+      return wood * ao * (0.3 + 0.9 * diff) + vec3(0.9) * pow(nh, 50.0) * 0.25;
+    }
+    if (u_frameStyle == 3) {        // satin black
+      return vec3(0.045) * ao * (0.4 + 0.8 * diff) + vec3(0.8) * pow(nh, 36.0) * 0.3 * ao;
+    }
+    // white gallery frame
+    return vec3(0.93, 0.92, 0.89) * ao * (0.45 + 0.6 * diff) + vec3(1.0) * pow(nh, 60.0) * 0.1;
+  }
+
+  void main() {
+    // light swings across as the card tilts; the default sits up and to the left, like a studio
+    vec3 L = normalize(vec3(-0.35 - u_tilt.x * 0.9, 0.35 + u_tilt.y * 0.9, 0.8));
+
+    vec2 pc = v_uv * u_size;                                   // canvas pixel
+    vec2 inner = pc - vec2(u_frame);                           // pixel within the painting
+    vec2 W = u_size - 2.0 * u_frame;
+    if (u_frame > 0.0 && (inner.x < 0.0 || inner.y < 0.0 || inner.x > W.x || inner.y > W.y)) {
+      gl_FragColor = vec4(frameColour(pc, L), 1.0);
+      return;
+    }
+    puv = inner / W;
+
+    // slope of the paint surface (Sobel), turned into the direction the surface faces
+    float tl = h(vec2(-1,-1)), t = h(vec2(0,-1)), tr = h(vec2(1,-1));
+    float l = h(vec2(-1, 0)),                     r = h(vec2(1, 0));
+    float bl = h(vec2(-1, 1)), b = h(vec2(0, 1)), br = h(vec2(1, 1));
+    float dx = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+    float dy = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+    vec3 n = normalize(vec3(-dx * u_relief, dy * u_relief, 1.0));
+
+    float diffuse = dot(n, L) - L.z;                      // 0 on flat paint: flat areas keep their colour
+    diffuse = diffuse < 0.0 ? diffuse * 0.45 : diffuse;   // paint is translucent-ish: shadows stay soft
+    vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+    float spec = pow(max(dot(n, H), 0.0), 40.0) * step(0.0005, abs(dx) + abs(dy));
+
+    vec3 c = texture2D(u_img, puv).rgb;
+    if (u_mode == 1) { gl_FragColor = vec4(vec3(texture2D(u_h, puv).r), 1.0); return; }
+    if (u_mode == 2) { gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
+    if (u_mode == 3) { gl_FragColor = vec4(c, 1.0); return; }
+    vec3 lit = c * (1.0 + diffuse * u_light * 1.6) + vec3(1.0, 0.97, 0.9) * spec * u_gloss * (0.35 + 0.65 * length(u_tilt));
+
+    // the painting sits below the frame's lip: the lip on the light's side casts a thin shadow
+    if (u_frame > 0.0) {
+      float w = u_frame * 0.16;
+      float sh = max(-L.x, 0.0) * (1.0 - smoothstep(0.0, w, inner.x))
+               + max(L.x, 0.0) * (1.0 - smoothstep(0.0, w, W.x - inner.x))
+               + max(L.y, 0.0) * (1.0 - smoothstep(0.0, w, inner.y))
+               + max(-L.y, 0.0) * (1.0 - smoothstep(0.0, w, W.y - inner.y));
+      lit *= 1.0 - 0.6 * clamp(sh, 0.0, 1.0);
+    }
+    gl_FragColor = vec4(lit, 1.0);
+  }`;
+function shader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const U = (n) => gl.getUniformLocation(prog, n);
+gl.uniform1i(U('u_img'), 0);
+gl.uniform1i(U('u_h'), 1);
+
+function texture(unit) {
+  const t = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+  for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+  return t;
+}
+const tex = { img: texture(0), h: texture(1) };
+function upload(t, unit, source) {
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+}
+
+// ---------- painting
+const painted = document.createElement('canvas');
+const height = document.createElement('canvas');
+let photo = null, job = 0;
+
+async function repaint() {
+  if (!photo) return;
+  const my = ++job;
+  // same size the painter will choose, so the height canvas matches the painting
+  const s = LONG_SIDE / Math.max(photo.naturalWidth, photo.naturalHeight);
+  const W = Math.max(64, Math.round(photo.naturalWidth * s)), H = Math.max(64, Math.round(photo.naturalHeight * s));
+  height.width = W; height.height = H;
+  const hctx = height.getContext('2d');
+  hctx.fillStyle = '#000';
+  hctx.fillRect(0, 0, W, H);
+  const ctx = withHeight(painted.getContext('2d', { willReadFrequently: true }), hctx);
+  const fakeCanvas = { getContext: () => ctx };
+  const r = await paintInto(photo, /** @type {any} */ (fakeCanvas), $('preset').value, LONG_SIDE, (m) => { if (my === job) status(m); });
+  if (!r || my !== job) return;
+  size = { W, H };
+  resizeFrame();
+  upload(tex.img, 0, painted);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, tex.h);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, W, H, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, paintTexture(height));
+  gl.uniform2f(U('u_px'), 1 / W, 1 / H);
+  status(`Painted in ${r.seconds.toFixed(1)} s. Move the pointer to move the light.`);
+}
+async function usePhoto(url) { photo = await loadImage(url); repaint(); }
+
+// the frame is drawn by the shader around the painting, so it's lit by the same light
+let size = null;
+function resizeFrame() {
+  if (!size) return;
+  const style = +$('frameStyle').value;
+  const F = style === 0 ? 0 : Math.round(Math.min(size.W, size.H) * (style === 4 ? 0.07 : 0.1));
+  $('gl').width = size.W + 2 * F; $('gl').height = size.H + 2 * F;
+  gl.viewport(0, 0, size.W + 2 * F, size.H + 2 * F);
+  gl.uniform1f(U('u_frame'), F);
+  gl.uniform2f(U('u_size'), size.W + 2 * F, size.H + 2 * F);
+  gl.uniform1i(U('u_frameStyle'), style);
+}
+
+// ---------- controls
+fillPresets($('preset'));
+$('preset').addEventListener('change', repaint);
+$('frameStyle').addEventListener('change', resizeFrame);
+onPicture($('file'), $('stage'), usePhoto);
+const outs = () => {
+  $('reliefOut').textContent = (+$('relief').value).toFixed(1);
+  $('lightOut').textContent = `${Math.round($('light').value * 100)}%`;
+  $('glossOut').textContent = `${Math.round($('gloss').value * 100)}%`;
+  $('angleOut').textContent = `±${$('angle').value}°`;
+};
+for (const id of ['relief', 'light', 'gloss', 'angle']) $(id).addEventListener('input', outs);
+outs();
+
+trackTilt($('stage'), (x, y) => {
+  $('card').style.setProperty('--rx', (x * +$('angle').value).toFixed(2));
+  $('card').style.setProperty('--ry', (y * +$('angle').value).toFixed(2));
+  gl.uniform2f(U('u_tilt'), x, y);
+  gl.uniform1f(U('u_relief'), +$('relief').value);
+  gl.uniform1f(U('u_light'), +$('light').value);
+  gl.uniform1f(U('u_gloss'), +$('gloss').value);
+  gl.uniform1i(U('u_mode'), +$('mode').value);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+});
+
+usePhoto(SAMPLE);
+</script>
+</body>
+</html>

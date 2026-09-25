@@ -1,8 +1,12 @@
 // @ts-check
 // UI wiring only. Painting lives in painter.js, looks live in styles/, choices in presets.js.
-import { paint, focusRingWidth } from './painter.js';
+import { paint, focusRingWidth, outputSize } from './painter.js';
 import { STYLES } from './styles/index.js';
 import { PRESETS, DEFAULT_PRESET } from './presets.js';
+import { withHeight, paintTexture } from './height.js';
+import { createViewer } from './viewer.js';
+import { createTilt } from './tilt.js';
+import { estimateDepth } from './depth.js';
 
 /** @typedef {import('./types.js').BrushParams} BrushParams */
 
@@ -12,6 +16,9 @@ const $ = (id) => document.getElementById(id);
 const canvas = /** @type {HTMLCanvasElement} */ ($('paint'));
 const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
 const statusEl = $('status'), barEl = $('bar'), ring = $('ring'), originalEl = $('original');
+const viewCanvas = /** @type {HTMLCanvasElement} */ ($('view'));
+const frameEl = $('frame'), pic = $('pic');
+const heightCanvas = document.createElement('canvas');
 
 /** @type {HTMLImageElement | null} */
 let image = null;
@@ -90,13 +97,21 @@ function currentStyle() {
 async function run() {
   if (!image) return;
   const my = ++job;
+  showView(false); // watch the strokes go down on the flat canvas, then switch to the lit view
+  const longSide = parseInt($('quality').value, 10);
+  const { W, H } = outputSize(image, longSide);
+  heightCanvas.width = W;
+  heightCanvas.height = H;
+  const hctx = /** @type {CanvasRenderingContext2D} */ (heightCanvas.getContext('2d', { willReadFrequently: true }));
+  hctx.fillStyle = '#000';
+  hctx.fillRect(0, 0, W, H);
   const result = await paint({
-    ctx,
+    ctx: withHeight(ctx, hctx),
     image,
     params: readParams(),
     style: currentStyle(),
     seed,
-    longSide: parseInt($('quality').value, 10),
+    longSide,
     focusPoint,
     onProgress: (f, msg) => {
       if (my !== job) return;
@@ -108,8 +123,114 @@ async function run() {
   if (result && my === job) {
     statusEl.textContent = `${result.strokes.toLocaleString()} strokes in ${result.seconds.toFixed(1)} s. Tap the painting to move the small brush.`;
     updateFocusUi();
+    if (viewer) {
+      viewer.setPainting(canvas, paintTexture(heightCanvas));
+      showView(true);
+      if (depthOn && !depth) computeDepth();
+    }
   }
 }
+
+// ---------- view: relief, gold frame and 3D, drawn by the WebGL viewer over the finished painting
+const viewer = createViewer(viewCanvas);
+const tilt = createTilt($('stage'));
+let reliefOn = true, frameOn = true, depthOn = false, viewShown = false, dirty = true, depthBusy = false;
+/** @type {{data: Uint8Array, width: number, height: number} | null} */
+let depth = null;
+if (!viewer) $('reliefBtn').closest('.group').hidden = true; // no WebGL: the flat painting only
+
+const moving = () => reliefOn || (depthOn && !!depth);
+
+/** @param {boolean} on */
+function showView(on) {
+  viewShown = on && !!viewer;
+  viewCanvas.hidden = !viewShown;
+  canvas.hidden = viewShown;
+  placeOverlays();
+  dirty = true;
+}
+function placeOverlays() {
+  const inset = viewShown && viewer ? viewer.inset() : { x: 0, y: 0 };
+  pic.style.setProperty('--ix', `${inset.x * 100}%`);
+  pic.style.setProperty('--iy', `${inset.y * 100}%`);
+  frameEl.classList.toggle('lit', viewShown && moving());
+}
+function updateView() {
+  $('reliefBtn').setAttribute('aria-pressed', String(reliefOn));
+  $('frameBtn').setAttribute('aria-pressed', String(frameOn));
+  $('depthBtn').setAttribute('aria-pressed', String(depthOn));
+  $('reliefCtl').hidden = !reliefOn;
+  $('depthCtl').hidden = !depthOn;
+  $('reliefOut').textContent = `${Math.round((parseFloat($('relief').value) / 1.5) * 100)}%`;
+  $('depthOut').textContent = `${Math.round((parseFloat($('depthAmt').value) / 0.025) * 100)}%`;
+  viewer?.setOptions({
+    relief: reliefOn ? parseFloat($('relief').value) : 0,
+    frame: frameOn,
+    depth: depthOn ? parseFloat($('depthAmt').value) : 0,
+  });
+  placeOverlays();
+  dirty = true;
+}
+
+async function computeDepth() {
+  if (!image || depthBusy) return;
+  const img = image;
+  depthBusy = true;
+  $('depthBtn').disabled = true;
+  try {
+    const { W, H } = outputSize(img, parseInt($('quality').value, 10));
+    const photo = document.createElement('canvas');
+    photo.width = W;
+    photo.height = H;
+    /** @type {CanvasRenderingContext2D} */ (photo.getContext('2d')).drawImage(img, 0, 0, W, H);
+    const d = await estimateDepth(photo, (m) => { statusEl.textContent = m; });
+    if (img !== image) return; // a new picture arrived meanwhile; run() will ask again
+    depth = d;
+    viewer?.setDepth(d);
+    statusEl.textContent = '3D ready. Move over the painting, or tilt your phone.';
+  } catch (err) {
+    console.error(err);
+    depthOn = false;
+    statusEl.textContent = '3D could not load here. Check your connection, or try Chrome or Safari.';
+  } finally {
+    depthBusy = false;
+    $('depthBtn').disabled = false;
+    updateView();
+    if (depthOn && !depth && image !== img) computeDepth();
+  }
+}
+
+$('reliefBtn').addEventListener('click', () => { tilt.requestGyro(); reliefOn = !reliefOn; updateView(); });
+$('frameBtn').addEventListener('click', () => { frameOn = !frameOn; updateView(); });
+$('depthBtn').addEventListener('click', () => {
+  tilt.requestGyro();
+  depthOn = !depthOn;
+  updateView();
+  if (depthOn && !depth) computeDepth();
+});
+$('relief').addEventListener('input', updateView);
+$('depthAmt').addEventListener('input', updateView);
+document.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') tilt.requestGyro(); });
+
+/** @param {number} now */
+function frame(now) {
+  if (viewShown && viewer) {
+    const t = tilt.tick(now);
+    if (moving()) {
+      if (t.moved || dirty) {
+        viewer.render(t.x, t.y);
+        frameEl.style.setProperty('--rx', t.x.toFixed(3));
+        frameEl.style.setProperty('--ry', t.y.toFixed(3));
+      }
+    } else if (dirty) {
+      viewer.render(0, 0);
+    }
+    dirty = false;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+updateView();
 
 // ---------- pictures
 /** @param {string} url */
@@ -118,6 +239,8 @@ function loadSrc(url) {
   img.onload = () => {
     image = img;
     originalEl.src = url;
+    depth = null;
+    viewer?.setDepth(null);
     focusPoint = null;
     updateFocusUi();
     run();
@@ -161,8 +284,8 @@ function updateFocusUi() {
     $('autoFocus').hidden = !focusPoint;
   }
 }
-canvas.addEventListener('click', (e) => {
-  const r = canvas.getBoundingClientRect();
+pic.addEventListener('click', (e) => {
+  const r = pic.getBoundingClientRect();
   focusPoint = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
   if (parseFloat(sliders.sharp[0].value) === 0) sliders.sharp[0].value = '0.12';
   updateFocusUi();
@@ -189,7 +312,7 @@ cmp.addEventListener('keyup', () => showOriginal(false));
 
 // ---------- saving: claude.ai's download capability when available, a normal download otherwise
 $('save').addEventListener('click', () => {
-  canvas.toBlob(async (blob) => {
+  (viewShown ? viewCanvas : canvas).toBlob(async (blob) => {
     if (!blob) return;
     const filename = `loose-brush-${presetId}.png`;
     if (!downloads) {

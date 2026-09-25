@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab: Tilt Card</title>
+<link rel="stylesheet" href="lab.css">
+<style>
+  .stage { perspective: 1100px; }
+  .card {
+    position: relative; border-radius: 6px; overflow: hidden; line-height: 0;
+    transform: rotateX(calc(var(--ry, 0) * -1deg)) rotateY(calc(var(--rx, 0) * 1deg));
+    box-shadow: calc(var(--rx, 0) * -1.2px) calc(18px + var(--ry, 0) * -1.2px) 40px -8px rgb(0 0 0 / 0.45);
+    will-change: transform;
+  }
+  .card canvas { max-width: min(62vw, 560px); max-height: 80vh; width: auto; height: auto; display: block; }
+  @media (max-width: 760px) { .card canvas { max-width: calc(100vw - 32px); } }
+  .glare {
+    position: absolute; inset: 0; pointer-events: none; mix-blend-mode: soft-light;
+    background: radial-gradient(circle at var(--gx, 50%) var(--gy, 50%), rgb(255 255 255 / var(--ga, 0.55)), transparent 55%);
+  }
+</style>
+</head>
+<body>
+<main class="stage" id="stage">
+  <div class="card" id="card"><canvas id="paint"></canvas><div class="glare" id="glare"></div></div>
+</main>
+<aside>
+  <h1>Lab 1: tilt card</h1>
+  <p>Move the pointer over the painting. Away from it, the card wobbles on its own.</p>
+  <label>Preset <select id="preset"></select></label>
+  <label>Picture <input type="file" id="file" accept="image/*"></label>
+  <label>Max angle <output id="angleOut"></output><input type="range" id="angle" min="0" max="20" step="1" value="8"></label>
+  <label>Glare <output id="glareOut"></output><input type="range" id="glareAmt" min="0" max="1" step="0.05" value="0.55"></label>
+  <p id="status">Loading…</p>
+  <p class="kill"><b>Kill if</b> it feels like a gimmick after 30 seconds of playing with it.</p>
+</aside>
+<script type="module">
+import { SAMPLE, loadImage, fillPresets, paintInto, onPicture, trackTilt } from './shared.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('paint'), card = $('card'), glare = $('glare'), stage = $('stage');
+let photo = null, job = 0;
+
+async function repaint() {
+  if (!photo) return;
+  const my = ++job;
+  const r = await paintInto(photo, canvas, $('preset').value, 1200, (m) => { if (my === job) $('status').textContent = m; });
+  if (r && my === job) $('status').textContent = `Painted in ${r.seconds.toFixed(1)} s.`;
+}
+async function usePhoto(url) { photo = await loadImage(url); repaint(); }
+
+fillPresets($('preset'));
+$('preset').addEventListener('change', repaint);
+onPicture($('file'), stage, usePhoto);
+const showOut = () => { $('angleOut').textContent = `±${$('angle').value}°`; $('glareOut').textContent = `${Math.round($('glareAmt').value * 100)}%`; };
+$('angle').addEventListener('input', showOut);
+$('glareAmt').addEventListener('input', showOut);
+showOut();
+
+trackTilt(stage, (x, y) => {
+  const max = +$('angle').value;
+  card.style.setProperty('--rx', (x * max).toFixed(2));
+  card.style.setProperty('--ry', (y * max).toFixed(2));
+  // the highlight sits opposite the side tilting toward you
+  glare.style.setProperty('--gx', `${50 - x * 45}%`);
+  glare.style.setProperty('--gy', `${50 - y * 45}%`);
+  glare.style.setProperty('--ga', String(+$('glareAmt').value * (0.4 + 0.6 * Math.hypot(x, y))));
+});
+
+usePhoto(SAMPLE);
+</script>
+</body>
+</html>

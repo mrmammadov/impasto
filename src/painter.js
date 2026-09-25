@@ -27,6 +27,18 @@ function layerPlan(p, withFocus) {
 }
 
 /**
+ * The canvas size a painting of `image` will have.
+ * @param {{naturalWidth: number, naturalHeight: number}} image @param {number} longSide
+ */
+export function outputSize(image, longSide) {
+  const scale = longSide / Math.max(image.naturalWidth, image.naturalHeight);
+  return {
+    W: Math.max(64, Math.round(image.naturalWidth * scale)),
+    H: Math.max(64, Math.round(image.naturalHeight * scale)),
+  };
+}
+
+/**
  * Paint `job.image` onto `job.ctx`. Returns null if cancelled part-way.
  * @param {PaintJob} job
  * @returns {Promise<PaintResult | null>}
@@ -39,9 +51,7 @@ export async function paint(job) {
   const rng = mulberry32(seed);
 
   // --- read the picture at working size
-  const scale = longSide / Math.max(image.naturalWidth, image.naturalHeight);
-  const W = Math.max(64, Math.round(image.naturalWidth * scale));
-  const H = Math.max(64, Math.round(image.naturalHeight * scale));
+  const { W, H } = outputSize(image, longSide);
   const N = W * H;
   const k = Math.max(W, H) / 2400;
   const off = document.createElement('canvas');

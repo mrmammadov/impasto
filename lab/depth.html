@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab: Depth Parallax</title>
+<link rel="stylesheet" href="lab.css">
+<style>
+  .stage { perspective: 1100px; }
+  .card {
+    line-height: 0; border-radius: 6px; overflow: hidden;
+    transform: rotateX(calc(var(--ry, 0) * -1deg)) rotateY(calc(var(--rx, 0) * 1deg));
+    box-shadow: calc(var(--rx, 0) * -1.2px) calc(18px + var(--ry, 0) * -1.2px) 40px -8px rgb(0 0 0 / 0.45);
+  }
+  #gl { max-width: min(62vw, 560px); max-height: 80vh; width: auto; height: auto; display: block; }
+  @media (max-width: 760px) { #gl { max-width: calc(100vw - 32px); } }
+</style>
+</head>
+<body>
+<main class="stage" id="stage"><div class="card" id="card"><canvas id="gl" width="400" height="600"></canvas></div></main>
+<aside>
+  <h1>Lab 2: depth parallax</h1>
+  <p>Depth is estimated from the original photo in your browser, then used to shift the painting as it tilts.</p>
+  <label>Preset <select id="preset"></select></label>
+  <label>Picture <input type="file" id="file" accept="image/*"></label>
+  <label>Show
+    <select id="mode"><option value="paint">Painting</option><option value="photo">Photo</option><option value="depth">Depth map</option></select>
+  </label>
+  <label>Depth strength <output id="strengthOut"></output><input type="range" id="strength" min="0" max="0.08" step="0.002" value="0.03"></label>
+  <label>Pivot depth <output id="focusOut"></output><input type="range" id="focus" min="0" max="1" step="0.05" value="0.4"></label>
+  <label>Edge grow <output id="dilateOut"></output><input type="range" id="dilate" min="0" max="8" step="1" value="2"></label>
+  <label>Card tilt <output id="angleOut"></output><input type="range" id="angle" min="0" max="12" step="1" value="3"></label>
+  <p id="status">Loading…</p>
+  <p id="stats"></p>
+  <p class="kill"><b>Kill if</b> the edges smear or wobble in a way that looks cheap on most of 4 pictures (sample, portrait, landscape, busy scene).</p>
+</aside>
+<script type="module">
+import { SAMPLE, loadImage, fillPresets, paintInto, onPicture, trackTilt } from './shared.js';
+
+const MODEL = 'onnx-community/depth-anything-v2-small';
+const LONG_SIDE = 1200;
+const $ = (id) => document.getElementById(id);
+const status = (m) => { $('status').textContent = m; };
+const stats = {};
+const showStats = () => { $('stats').textContent = Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join('\n'); };
+
+// ---------- WebGL: one full-screen quad; the fragment shader ray-marches the depth map
+const gl = $('gl').getContext('webgl', { premultipliedAlpha: false });
+const VS = `attribute vec2 p; varying vec2 v_uv;
+  void main() { v_uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+// For each output pixel, walk from the nearest depth to the farthest and take the first surface
+// that lands on this pixel after shifting by (depth - pivot) * offset. That keeps near things in
+// front of far things instead of simply stretching the image.
+const FS = `precision highp float;
+  varying vec2 v_uv;
+  uniform sampler2D u_img, u_depth;
+  uniform vec2 u_off, u_zoom;
+  uniform float u_focus;
+  uniform int u_showDepth;
+  void main() {
+    vec2 uv = 0.5 + (v_uv - 0.5) * u_zoom; // zoom in slightly so shifts never reveal the border
+    vec2 hit = uv;
+    for (int i = 0; i <= 48; i++) {
+      float d = 1.0 - float(i) / 48.0;
+      vec2 p = clamp(uv - (d - u_focus) * u_off, 0.0, 1.0);
+      hit = p;
+      if (texture2D(u_depth, p).r >= d) break;
+    }
+    gl_FragColor = u_showDepth == 1 ? vec4(vec3(texture2D(u_depth, hit).r), 1.0) : texture2D(u_img, hit);
+  }`;
+function shader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+const U = (n) => gl.getUniformLocation(prog, n);
+gl.uniform1i(U('u_img'), 0);
+gl.uniform1i(U('u_depth'), 1);
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+function texture(unit) {
+  const t = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+  for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+  return t;
+}
+const tex = { paint: texture(0), photo: texture(0), depth: texture(1) };
+function upload(t, unit, source) {
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+}
+function uploadDepth(data, w, h) {
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, tex.depth);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, data);
+}
+uploadDepth(new Uint8Array([128]), 1, 1); // flat until the real depth arrives
+
+// ---------- depth: grow near areas outward by r pixels so their edges don't tear on tilt
+let depthRaw = null;
+function dilate({ data, width: w, height: h }, r) {
+  if (r === 0) return data;
+  const a = new Uint8Array(data.length), b = new Uint8Array(data.length);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let m = 0;
+    for (let k = Math.max(0, x - r); k <= Math.min(w - 1, x + r); k++) m = Math.max(m, data[y * w + k]);
+    a[y * w + x] = m;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let m = 0;
+    for (let k = Math.max(0, y - r); k <= Math.min(h - 1, y + r); k++) m = Math.max(m, a[k * w + x]);
+    b[y * w + x] = m;
+  }
+  return b;
+}
+function refreshDepth() {
+  if (depthRaw) uploadDepth(dilate(depthRaw, +$('dilate').value), depthRaw.width, depthRaw.height);
+}
+
+let estimator = null;
+async function getEstimator() {
+  if (estimator) return estimator;
+  const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+  const files = {};
+  const progress_callback = (e) => {
+    if (e.status !== 'progress') return;
+    files[e.file] = e;
+    const loaded = Object.values(files).reduce((s, f) => s + (f.loaded || 0), 0);
+    const total = Object.values(files).reduce((s, f) => s + (f.total || 0), 0);
+    status(`Downloading depth model… ${(loaded / 1e6).toFixed(0)} / ${(total / 1e6).toFixed(0)} MB`);
+  };
+  const t0 = performance.now();
+  try {
+    if (!navigator.gpu) throw new Error('no WebGPU');
+    estimator = await pipeline('depth-estimation', MODEL, { device: 'webgpu', dtype: 'fp32', progress_callback });
+    stats.backend = 'WebGPU';
+  } catch {
+    estimator = await pipeline('depth-estimation', MODEL, { progress_callback });
+    stats.backend = 'WASM (CPU)';
+  }
+  stats['model load'] = `${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  showStats();
+  return estimator;
+}
+
+async function estimateDepth(photoCanvas) {
+  const est = await getEstimator();
+  status('Estimating depth…');
+  const blob = await new Promise((r) => photoCanvas.toBlob(r, 'image/png'));
+  const url = URL.createObjectURL(blob);
+  const t0 = performance.now();
+  let out = await est(url);
+  URL.revokeObjectURL(url);
+  if (Array.isArray(out)) out = out[0];
+  stats.depth = `${((performance.now() - t0) / 1000).toFixed(1)} s (${out.depth.width}×${out.depth.height})`;
+  showStats();
+  return out.depth; // RawImage, 1 channel, bright = near
+}
+
+// ---------- pictures
+const painted = document.createElement('canvas');
+const photoCanvas = document.createElement('canvas');
+let photo = null, job = 0;
+
+async function repaint() {
+  const my = ++job;
+  const r = await paintInto(photo, painted, $('preset').value, LONG_SIDE, (m) => { if (my === job) status(m); });
+  if (!r || my !== job) return false;
+  upload(tex.paint, 0, painted);
+  stats.painting = `${r.seconds.toFixed(1)} s`;
+  showStats();
+  return true;
+}
+
+async function usePhoto(url) {
+  photo = await loadImage(url);
+  // same size the painter uses, so photo, painting and depth line up pixel for pixel
+  const s = LONG_SIDE / Math.max(photo.naturalWidth, photo.naturalHeight);
+  const W = Math.max(64, Math.round(photo.naturalWidth * s)), H = Math.max(64, Math.round(photo.naturalHeight * s));
+  photoCanvas.width = W; photoCanvas.height = H;
+  photoCanvas.getContext('2d').drawImage(photo, 0, 0, W, H);
+  $('gl').width = W; $('gl').height = H;
+  gl.viewport(0, 0, W, H);
+  upload(tex.photo, 0, photoCanvas);
+  upload(tex.paint, 0, photoCanvas);
+  depthRaw = null;
+  uploadDepth(new Uint8Array([128]), 1, 1);
+  try {
+    await repaint();
+    depthRaw = await estimateDepth(photoCanvas);
+    refreshDepth();
+    status('Ready. Move the pointer over the picture.');
+  } catch (e) {
+    console.error(e);
+    status(`Depth failed: ${e.message}`);
+  }
+}
+
+// ---------- controls
+fillPresets($('preset'));
+$('preset').addEventListener('change', async () => { if (await repaint()) status('Ready.'); });
+onPicture($('file'), $('stage'), usePhoto);
+const outs = () => {
+  $('strengthOut').textContent = `${(+$('strength').value * 100).toFixed(1)}% of width`;
+  $('focusOut').textContent = (+$('focus').value).toFixed(2);
+  $('dilateOut').textContent = `${$('dilate').value} px`;
+  $('angleOut').textContent = `±${$('angle').value}°`;
+};
+for (const id of ['strength', 'focus', 'angle']) $(id).addEventListener('input', outs);
+$('dilate').addEventListener('input', () => { outs(); refreshDepth(); });
+outs();
+
+trackTilt($('stage'), (x, y) => {
+  const W = $('gl').width, H = $('gl').height, s = +$('strength').value, mode = $('mode').value;
+  $('card').style.setProperty('--rx', (x * +$('angle').value).toFixed(2));
+  $('card').style.setProperty('--ry', (y * +$('angle').value).toFixed(2));
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, mode === 'photo' ? tex.photo : tex.paint);
+  // viewing from the right makes near things slide left against far ones
+  gl.uniform2f(U('u_off'), -x * s, -y * s * (W / H));
+  gl.uniform1f(U('u_focus'), +$('focus').value);
+  const reach = s * Math.max(+$('focus').value, 1 - +$('focus').value);
+  gl.uniform2f(U('u_zoom'), 1 - 2 * reach, 1 - 2 * reach * (W / H));
+  gl.uniform1i(U('u_showDepth'), mode === 'depth' ? 1 : 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+});
+
+usePhoto(SAMPLE);
+</script>
+</body>
+</html>

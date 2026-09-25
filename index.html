@@ -12,8 +12,11 @@
   <main class="stage" id="stage">
     <div class="frame" id="frame">
       <canvas id="paint" width="800" height="1200" aria-label="The painting"></canvas>
-      <img id="original" alt="The original picture">
-      <div class="ring" id="ring"></div>
+      <canvas id="view" hidden aria-label="The painting, lit and framed"></canvas>
+      <div class="pic" id="pic">
+        <img id="original" alt="The original picture">
+        <div class="ring" id="ring"></div>
+      </div>
     </div>
     <div class="bar" aria-hidden="true"><i id="bar"></i></div>
     <div class="status" id="status" role="status" aria-live="polite">Loading…</div>
@@ -21,12 +24,23 @@
   <aside class="rail">
     <div>
       <h1>Loose Brush</h1>
-      <p class="lede">Repaints any picture as a loose oil sketch. Big brushes cover everything; a small brush goes only where you want detail.</p>
+      <p class="lede">Repaints any picture as a loose oil sketch. Big brushes cover everything; a small brush goes only where you want detail. Move over the painting, or tilt your phone, to see the paint catch the light.</p>
     </div>
     <div class="group">
       <h2>Style</h2>
       <div class="presets" id="presets" role="radiogroup" aria-label="Style presets"></div>
       <p class="hint" id="presetNote"></p>
+    </div>
+    <div class="group">
+      <h2>View</h2>
+      <div class="presets" role="group" aria-label="View">
+        <button type="button" class="preset" id="reliefBtn" aria-pressed="true">Relief</button>
+        <button type="button" class="preset" id="frameBtn" aria-pressed="true">Gold frame</button>
+        <button type="button" class="preset" id="depthBtn" aria-pressed="false">3D</button>
+      </div>
+      <div class="ctl" id="reliefCtl"><label for="relief">Paint thickness</label><output id="reliefOut"></output><input type="range" id="relief" min="0.25" max="4" step="0.25" value="1.5"></div>
+      <div class="ctl" id="depthCtl" hidden><label for="depthAmt">Depth</label><output id="depthOut"></output><input type="range" id="depthAmt" min="0.005" max="0.06" step="0.005" value="0.025"></div>
+      <p class="hint" id="viewHint">3D downloads a depth model the first time (about 100 MB). Your picture still stays on your device.</p>
     </div>
     <div class="group">
       <h2>Picture</h2>
