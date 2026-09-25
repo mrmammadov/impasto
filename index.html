@@ -1,87 +1,133 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Loose Brush</title>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
-<script>try { var t = localStorage.getItem('loose-brush:theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
-</head>
-<body>
-<div class="app">
-  <main class="stage" id="stage">
-    <div class="frame" id="frame">
-      <canvas id="paint" width="800" height="1200" aria-label="The painting"></canvas>
-      <canvas id="view" hidden aria-label="The painting, lit and framed"></canvas>
-      <div class="pic" id="pic"><img id="original" alt="The original picture"></div>
-    </div>
-    <div class="bar" aria-hidden="true"><i id="bar"></i></div>
-    <div class="status" id="status" role="status" aria-live="polite">Loading…</div>
-    <div class="tools">
-      <button type="button" id="compare">Hold to compare</button>
-      <button type="button" id="reseed">New strokes</button>
-      <button type="button" class="primary" id="save" hidden>Save image</button>
-    </div>
-  </main>
-  <aside class="rail">
-    <div>
-      <div class="head">
-        <h1>Loose Brush</h1>
-        <button type="button" class="icon" id="theme" aria-label="Switch to dark mode"></button>
-      </div>
-      <p class="lede">Turn any photo into an oil painting.</p>
-    </div>
-    <div class="group">
-      <label class="filebtn primary">Choose a picture<input type="file" id="file" accept="image/*"></label>
-      <p class="hint" id="dropHint">Or drop one onto the painting.</p>
-    </div>
-    <div class="group">
-      <h2>Style</h2>
-      <div class="presets" id="presets" role="radiogroup" aria-label="Style"></div>
-      <p class="hint" id="presetNote"></p>
-    </div>
-    <div class="group" id="viewGroup">
-      <h2>View</h2>
-      <div class="seg" id="viewSeg" role="radiogroup" aria-label="View">
-        <button type="button" role="radio" data-view="flat" aria-checked="false">Flat</button>
-        <button type="button" role="radio" data-view="relief" aria-checked="true">Relief</button>
-        <button type="button" role="radio" data-view="3d" aria-checked="false">3D</button>
-      </div>
-      <div class="confirm" id="depthConfirm" hidden>
-        <p class="hint">3D needs a one-time download of about 100 MB. Your picture stays on your device.</p>
-        <div class="row">
-          <button type="button" class="primary" id="depthGo">Download</button>
-          <button type="button" id="depthCancel">Not now</button>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Impasto</title>
+    <meta
+      name="description"
+      content="Turn any photo into an oil painting you can tilt in the light. Runs entirely in your browser; your picture is never uploaded."
+    />
+    <meta name="theme-color" content="#e6e4dc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#22251f" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Impasto" />
+    <meta property="og:description" content="Turn any photo into an oil painting you can tilt in the light." />
+    <meta property="og:url" content="https://mrmammadov.github.io/impasto/" />
+    <meta property="og:image" content="https://mrmammadov.github.io/impasto/social.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script>
+      try {
+        var t = localStorage.getItem('impasto:theme');
+        if (t) document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div class="app">
+      <main class="stage" id="stage">
+        <div class="frame" id="frame">
+          <canvas id="paint" width="800" height="1200" aria-label="The painting"></canvas>
+          <canvas id="view" hidden aria-label="The painting, lit and framed"></canvas>
+          <div class="pic" id="pic"><img id="original" alt="The original picture" /></div>
         </div>
-      </div>
-    </div>
-    <details class="fine" id="fine">
-      <summary>Fine-tune</summary>
-      <div class="group">
-        <h3>Brush</h3>
-        <div class="ctl"><label for="size">Brush size</label><output id="sizeOut"></output><input type="range" id="size" min="0.5" max="2" step="0.05"></div>
-        <div class="ctl"><label for="detail">Detail</label><output id="detailOut"></output><input type="range" id="detail" min="0" max="1" step="0.05"></div>
-        <div class="ctl"><label for="length">Stroke length</label><output id="lengthOut"></output><input type="range" id="length" min="0.4" max="2" step="0.05"></div>
-        <div class="ctl"><label for="dry">Dry brush</label><output id="dryOut"></output><input type="range" id="dry" min="0" max="1" step="0.05"></div>
-        <div class="ctl"><label for="sharp">Sharp area</label><output id="sharpOut"></output><input type="range" id="sharp" min="0" max="0.4" step="0.01"></div>
-      </div>
-      <div class="group" id="viewFine">
-        <h3>View</h3>
-        <label class="check" id="frameCtl"><input type="checkbox" id="frameOn" checked> Gold frame</label>
-        <div class="ctl" id="reliefCtl"><label for="relief">Paint thickness</label><output id="reliefOut"></output><input type="range" id="relief" min="0.25" max="4" step="0.25" value="1.5"></div>
-        <div class="ctl" id="depthCtl"><label for="depthAmt">3D depth</label><output id="depthOut"></output><input type="range" id="depthAmt" min="0.01" max="0.07" step="0.005" value="0.035"></div>
-      </div>
-      <div class="group">
-        <h3>Output</h3>
-        <div class="ctl"><label for="quality">Size (long side)</label><output></output>
-          <select id="quality"><option value="1200">1200 px, fastest</option><option value="1600" selected>1600 px</option><option value="2400">2400 px, slowest</option></select>
+        <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+        <div class="status" id="status" role="status" aria-live="polite">Loading…</div>
+        <div class="tools">
+          <button type="button" id="compare">Hold to compare</button>
+          <button type="button" id="reseed">New strokes</button>
+          <button type="button" class="primary" id="save" hidden>Save image</button>
         </div>
-      </div>
-    </details>
-    <p class="foot">Everything runs in your browser. Your picture is never uploaded.</p>
-  </aside>
-</div>
-<script type="module" src="src/main.js"></script>
-</body>
+      </main>
+      <aside class="rail">
+        <div>
+          <div class="head">
+            <h1>Impasto</h1>
+            <button type="button" class="icon" id="theme" aria-label="Switch to dark mode"></button>
+          </div>
+          <p class="lede">Turn any photo into an oil painting.</p>
+        </div>
+        <div class="group">
+          <label class="filebtn primary">Choose a picture<input type="file" id="file" accept="image/*" /></label>
+          <p class="hint" id="dropHint">Or drop one onto the painting.</p>
+        </div>
+        <div class="group">
+          <h2>Style</h2>
+          <div class="presets" id="presets" role="radiogroup" aria-label="Style"></div>
+          <p class="hint" id="presetNote"></p>
+        </div>
+        <div class="group" id="viewGroup">
+          <h2>View</h2>
+          <div class="seg" id="viewSeg" role="radiogroup" aria-label="View">
+            <button type="button" role="radio" data-view="flat" aria-checked="false">Flat</button>
+            <button type="button" role="radio" data-view="relief" aria-checked="true">Relief</button>
+            <button type="button" role="radio" data-view="3d" aria-checked="false">3D</button>
+          </div>
+          <div class="confirm" id="depthConfirm" hidden>
+            <p class="hint">3D needs a one-time download of about 100 MB. Your picture stays on your device.</p>
+            <div class="row">
+              <button type="button" class="primary" id="depthGo">Download</button>
+              <button type="button" id="depthCancel">Not now</button>
+            </div>
+          </div>
+        </div>
+        <details class="fine" id="fine">
+          <summary>Fine-tune</summary>
+          <div class="group">
+            <h3>Brush</h3>
+            <div class="ctl">
+              <label for="size">Brush size</label><output id="sizeOut"></output
+              ><input type="range" id="size" min="0.5" max="2" step="0.05" />
+            </div>
+            <div class="ctl">
+              <label for="detail">Detail</label><output id="detailOut"></output
+              ><input type="range" id="detail" min="0" max="1" step="0.05" />
+            </div>
+            <div class="ctl">
+              <label for="length">Stroke length</label><output id="lengthOut"></output
+              ><input type="range" id="length" min="0.4" max="2" step="0.05" />
+            </div>
+            <div class="ctl">
+              <label for="dry">Dry brush</label><output id="dryOut"></output
+              ><input type="range" id="dry" min="0" max="1" step="0.05" />
+            </div>
+            <div class="ctl">
+              <label for="sharp">Sharp area</label><output id="sharpOut"></output
+              ><input type="range" id="sharp" min="0" max="0.4" step="0.01" />
+            </div>
+          </div>
+          <div class="group" id="viewFine">
+            <h3>View</h3>
+            <label class="check" id="frameCtl"><input type="checkbox" id="frameOn" checked /> Gold frame</label>
+            <div class="ctl" id="reliefCtl">
+              <label for="relief">Paint thickness</label><output id="reliefOut"></output
+              ><input type="range" id="relief" min="0.25" max="4" step="0.25" value="1.5" />
+            </div>
+            <div class="ctl" id="depthCtl">
+              <label for="depthAmt">3D depth</label><output id="depthOut"></output
+              ><input type="range" id="depthAmt" min="0.01" max="0.07" step="0.005" value="0.035" />
+            </div>
+          </div>
+          <div class="group">
+            <h3>Output</h3>
+            <div class="ctl">
+              <label for="quality">Size (long side)</label><output></output>
+              <select id="quality">
+                <option value="1200">1200 px, fastest</option>
+                <option value="1600" selected>1600 px</option>
+                <option value="2400">2400 px, slowest</option>
+              </select>
+            </div>
+          </div>
+        </details>
+        <p class="foot">
+          Your picture never leaves your device. The 3D view downloads its model from jsDelivr and Hugging Face the
+          first time.
+        </p>
+      </aside>
+    </div>
+    <script type="module" src="src/main.js"></script>
+  </body>
 </html>

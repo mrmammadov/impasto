@@ -1,0 +1,7 @@
+dist/
+node_modules/
+package-lock.json
+assets/fonts/
+test-results/
+playwright-report/
+lab/

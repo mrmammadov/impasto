@@ -15,9 +15,12 @@ const $ = (id) => document.getElementById(id);
 
 const canvas = /** @type {HTMLCanvasElement} */ ($('paint'));
 const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d', { willReadFrequently: true }));
-const statusEl = $('status'), barEl = $('bar'), originalEl = $('original');
+const statusEl = $('status'),
+  barEl = $('bar'),
+  originalEl = $('original');
 const viewCanvas = /** @type {HTMLCanvasElement} */ ($('view'));
-const frameEl = $('frame'), pic = $('pic');
+const frameEl = $('frame'),
+  pic = $('pic');
 const heightCanvas = document.createElement('canvas');
 
 /** @type {HTMLImageElement | null} */
@@ -52,7 +55,8 @@ function readParams() {
 
 /** @param {BrushParams} params */
 function writeParams(params) {
-  for (const key of /** @type {(keyof BrushParams)[]} */ (Object.keys(sliders))) sliders[key][0].value = String(params[key]);
+  for (const key of /** @type {(keyof BrushParams)[]} */ (Object.keys(sliders)))
+    sliders[key][0].value = String(params[key]);
   readParams();
 }
 
@@ -66,14 +70,13 @@ function renderPresets() {
     b.className = 'preset';
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', String(p.id === presetId));
+    b.tabIndex = p.id === presetId ? 0 : -1;
     b.textContent = p.name;
     b.addEventListener('click', () => selectPreset(p.id));
     presetList.appendChild(b);
   }
   const current = PRESETS.find((p) => p.id === presetId);
-  $('presetNote').textContent = current
-    ? customised ? `Custom, based on ${current.name}.` : current.description
-    : '';
+  $('presetNote').textContent = current ? (customised ? `Custom, based on ${current.name}.` : current.description) : '';
 }
 /** @param {string} id */
 function selectPreset(id) {
@@ -89,6 +92,26 @@ function currentStyle() {
   const p = PRESETS.find((x) => x.id === presetId) || PRESETS[0];
   return STYLES[p.style] || Object.values(STYLES)[0];
 }
+
+// ---------- keyboard: a radio group is one Tab stop; arrow keys move and select within it
+/** @param {HTMLElement} group */
+function arrowKeys(group) {
+  /** @type {Record<string, number>} */
+  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+  group.addEventListener('keydown', (e) => {
+    const items = /** @type {HTMLElement[]} */ ([...group.querySelectorAll('[role="radio"]')]);
+    const i = items.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    if (!(e.key in step) || i < 0) return;
+    e.preventDefault();
+    items[(i + step[e.key] + items.length) % items.length].click();
+    // the Style chips are rebuilt on selection, so look the chosen one up again
+    const target = /** @type {HTMLElement | null} */ (
+      group.querySelector('[aria-checked="true"]') ?? items[(i + step[e.key] + items.length) % items.length]
+    );
+    target?.focus();
+  });
+}
+arrowKeys(presetList);
 
 // ---------- painting
 async function run() {
@@ -127,14 +150,22 @@ async function run() {
 }
 
 // ---------- view: Flat, Relief or 3D, drawn by the WebGL viewer over the finished painting
-const viewer = createViewer(viewCanvas);
+const viewer = createViewer(viewCanvas, () => {
+  placeOverlays();
+  dirty = true;
+});
 const tilt = createTilt($('stage'));
 /** @type {'flat' | 'relief' | '3d'} */
 let view = 'relief';
-let viewShown = false, dirty = true, depthBusy = false;
+let viewShown = false,
+  dirty = true,
+  depthBusy = false;
 /** @type {{data: Uint8Array, width: number, height: number} | null} */
 let depth = null;
-if (!viewer) { $('viewGroup').hidden = true; $('viewFine').hidden = true; } // no WebGL: the flat painting only
+if (!viewer) {
+  $('viewGroup').hidden = true;
+  $('viewFine').hidden = true;
+} // no WebGL: the flat painting only
 
 const moving = () => view !== 'flat';
 
@@ -153,7 +184,10 @@ function placeOverlays() {
   frameEl.classList.toggle('lit', viewShown && view === 'relief'); // the card tilts as an object; 3D is a window, it stays put
 }
 function updateView() {
-  for (const b of $('viewSeg').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === view));
+  for (const b of $('viewSeg').querySelectorAll('button')) {
+    b.setAttribute('aria-checked', String(b.dataset.view === view));
+    b.tabIndex = b.dataset.view === view ? 0 : -1;
+  }
   // Relief is the painting as an object (paint, frame, moving light); 3D is a window into the
   // scene. Mixed, the paint would slide across its own canvas, so each mode has its own controls.
   $('reliefCtl').hidden = view !== 'relief';
@@ -171,24 +205,40 @@ function updateView() {
 }
 
 // the 3D model is a one-time download: ask the first time, then remember the answer
-const DEPTH_OK = 'loose-brush:3d-ok';
-const depthAllowed = () => { try { return localStorage.getItem(DEPTH_OK) === '1'; } catch { return false; } };
+const DEPTH_OK = 'impasto:3d-ok';
+const depthAllowed = () => {
+  try {
+    return localStorage.getItem(DEPTH_OK) === '1';
+  } catch {
+    return false;
+  }
+};
 
 /** @param {'flat' | 'relief' | '3d'} next */
 function setView(next) {
   tilt.requestGyro();
   $('depthConfirm').hidden = true;
-  if (next === '3d' && !depth && !depthAllowed()) { $('depthConfirm').hidden = false; return; }
+  if (next === '3d' && !depth && !depthAllowed()) {
+    $('depthConfirm').hidden = false;
+    return;
+  }
   view = next;
   updateView();
   if (view === '3d' && !depth) computeDepth();
 }
 for (const b of $('viewSeg').querySelectorAll('button')) b.addEventListener('click', () => setView(b.dataset.view));
+arrowKeys($('viewSeg'));
 $('depthGo').addEventListener('click', () => {
-  try { localStorage.setItem(DEPTH_OK, '1'); } catch { /* asks again next visit */ }
+  try {
+    localStorage.setItem(DEPTH_OK, '1');
+  } catch {
+    /* asks again next visit */
+  }
   setView('3d');
 });
-$('depthCancel').addEventListener('click', () => { $('depthConfirm').hidden = true; });
+$('depthCancel').addEventListener('click', () => {
+  $('depthConfirm').hidden = true;
+});
 
 async function computeDepth() {
   if (!image || depthBusy) return;
@@ -200,7 +250,9 @@ async function computeDepth() {
     photo.width = W;
     photo.height = H;
     /** @type {CanvasRenderingContext2D} */ (photo.getContext('2d')).drawImage(img, 0, 0, W, H);
-    const d = await estimateDepth(photo, (m) => { statusEl.textContent = m; });
+    const d = await estimateDepth(photo, (m) => {
+      statusEl.textContent = m;
+    });
     if (img !== image) return; // a new picture arrived meanwhile; run() will ask again
     depth = d;
     viewer?.setDepth(d);
@@ -219,12 +271,22 @@ async function computeDepth() {
 $('frameOn').addEventListener('change', updateView);
 $('relief').addEventListener('input', updateView);
 $('depthAmt').addEventListener('input', updateView);
-document.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') tilt.requestGyro(); });
+document.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') tilt.requestGyro();
+});
 
 // fine-tune stays open or closed the way the viewer left it
-try { $('fine').open = localStorage.getItem('loose-brush:fine') === '1'; } catch { /* closed */ }
+try {
+  $('fine').open = localStorage.getItem('impasto:fine') === '1';
+} catch {
+  /* closed */
+}
 $('fine').addEventListener('toggle', () => {
-  try { localStorage.setItem('loose-brush:fine', $('fine').open ? '1' : '0'); } catch { /* not remembered */ }
+  try {
+    localStorage.setItem('impasto:fine', $('fine').open ? '1' : '0');
+  } catch {
+    /* not remembered */
+  }
 });
 
 /** @param {number} now */
@@ -248,33 +310,79 @@ requestAnimationFrame(frame);
 updateView();
 
 // ---------- pictures
-/** @param {string} url */
-function loadSrc(url) {
+// Paintings are at most 2400 px on the long side, so anything much bigger only costs memory
+// (a 48-megapixel phone photo decodes to ~200 MB). Big pictures are shrunk once, on arrival.
+const MAX_SIDE = 4096;
+const MAX_FILE_MB = 60;
+/** @type {string[]} */
+let objectUrls = [];
+let loadToken = 0;
+
+/** @param {HTMLImageElement} img @returns {Promise<{img: HTMLImageElement, url: string | null}>} */
+async function shrink(img) {
+  const scale = MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight);
+  if (scale >= 1) return { img, url: null };
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * scale);
+  c.height = Math.round(img.naturalHeight * scale);
+  /** @type {CanvasRenderingContext2D} */ (c.getContext('2d')).drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/jpeg', 0.92));
+  if (!blob) return { img, url: null };
+  const url = URL.createObjectURL(blob);
+  const small = new Image();
+  small.src = url;
+  await small.decode();
+  return { img: small, url };
+}
+
+/**
+ * @param {string} url
+ * @param {string} [failMessage]  What to say if the browser can't decode it.
+ */
+function loadSrc(url, failMessage = 'That file could not be opened as a picture. Try a JPEG, PNG or WebP.') {
   const img = new Image();
-  img.onload = () => {
-    image = img;
-    originalEl.src = url;
+  const my = ++loadToken;
+  img.onload = async () => {
+    const shrunk = await shrink(img);
+    if (my !== loadToken) return; // a newer picture was chosen meanwhile
+    for (const u of objectUrls) if (u !== url) URL.revokeObjectURL(u);
+    objectUrls = [url, shrunk.url].filter((u) => u && u.startsWith('blob:'));
+    image = shrunk.img;
+    originalEl.src = shrunk.url || url;
     depth = null;
     viewer?.setDepth(null);
     run();
   };
-  img.onerror = () => { statusEl.textContent = 'That file could not be opened as a picture. Try a JPEG or PNG.'; };
+  img.onerror = () => {
+    statusEl.textContent = failMessage;
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+  };
   img.src = url;
 }
 /** @param {File | undefined} file */
 function loadFile(file) {
-  if (!file || !file.type.startsWith('image/')) {
+  if (!file) return;
+  const heic = /\.(heic|heif)$/i.test(file.name) || /image\/hei[cf]/.test(file.type);
+  if (!file.type.startsWith('image/') && !heic) {
     statusEl.textContent = 'That file is not a picture. Choose a JPEG, PNG or WebP.';
     return;
   }
-  const fr = new FileReader();
-  fr.onload = () => loadSrc(String(fr.result));
+  if (file.size > MAX_FILE_MB * 1e6) {
+    statusEl.textContent = `That picture is over ${MAX_FILE_MB} MB. Try a smaller copy.`;
+    return;
+  }
   $('dropHint').hidden = true; // they've found how to add a picture
-  fr.readAsDataURL(file);
+  loadSrc(
+    URL.createObjectURL(file),
+    heic ? 'This browser can\u2019t open iPhone HEIC photos. Try Safari, or export the photo as JPEG.' : undefined,
+  );
 }
 $('file').addEventListener('change', (e) => loadFile(e.target.files[0]));
 const stage = $('stage');
-stage.addEventListener('dragover', (e) => { e.preventDefault(); stage.classList.add('dragging'); });
+stage.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  stage.classList.add('dragging');
+});
 stage.addEventListener('dragleave', () => stage.classList.remove('dragging'));
 stage.addEventListener('drop', (e) => {
   e.preventDefault();
@@ -286,24 +394,33 @@ stage.addEventListener('drop', (e) => {
 for (const key of /** @type {(keyof BrushParams)[]} */ (Object.keys(sliders))) {
   const input = sliders[key][0];
   input.addEventListener('input', readParams);
-  input.addEventListener('change', () => { customised = true; renderPresets(); run(); });
+  input.addEventListener('change', () => {
+    customised = true;
+    renderPresets();
+    run();
+  });
 }
 $('quality').addEventListener('change', run);
-$('reseed').addEventListener('click', () => { seed = (seed * 16807 + 11) % 2147483647; run(); });
+$('reseed').addEventListener('click', () => {
+  seed = (seed * 16807 + 11) % 2147483647;
+  run();
+});
 
 const cmp = $('compare');
 /** @param {boolean} on */
 const showOriginal = (on) => originalEl.classList.toggle('show', on);
 cmp.addEventListener('pointerdown', () => showOriginal(true));
 for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) cmp.addEventListener(ev, () => showOriginal(false));
-cmp.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') showOriginal(true); });
+cmp.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') showOriginal(true);
+});
 cmp.addEventListener('keyup', () => showOriginal(false));
 
 // ---------- saving: claude.ai's download capability when available, a normal download otherwise
 $('save').addEventListener('click', () => {
   (viewShown ? viewCanvas : canvas).toBlob(async (blob) => {
     if (!blob) return;
-    const filename = `loose-brush-${presetId}.png`;
+    const filename = `impasto-${presetId}.png`;
     if (!downloads) {
       const a = document.createElement('a');
       a.download = filename;
@@ -319,7 +436,10 @@ $('save').addEventListener('click', () => {
       const code = err && err.code;
       if (code === 'declined') statusEl.textContent = 'Save cancelled.';
       else if (code === 'rate_limited') statusEl.textContent = 'A save is already waiting for your answer.';
-      else { statusEl.textContent = 'Saving is not available here.'; $('save').hidden = true; }
+      else {
+        statusEl.textContent = 'Saving is not available here.';
+        $('save').hidden = true;
+      }
     }
   }, 'image/png');
 });
@@ -330,7 +450,9 @@ $('save').addEventListener('click', () => {
       try {
         downloads = await claude.use('downloads');
         $('save').hidden = !downloads;
-      } catch { downloads = null; }
+      } catch {
+        downloads = null;
+      }
       return;
     }
     await new Promise((r) => setTimeout(r, 250));
@@ -339,12 +461,15 @@ $('save').addEventListener('click', () => {
 })();
 
 // ---------- light / dark: follows the system until the viewer picks one, then remembers it
-const THEME = 'loose-brush:theme';
+const THEME = 'impasto:theme';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const themeBtn = $('theme');
-const ICON = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON = (d) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const MOON = ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>');
-const SUN = ICON('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>');
+const SUN = ICON(
+  '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+);
 const isDark = () => (document.documentElement.dataset.theme || (systemDark.matches ? 'dark' : 'light')) === 'dark';
 function showThemeIcon() {
   const dark = isDark();
@@ -354,7 +479,11 @@ function showThemeIcon() {
 themeBtn.addEventListener('click', () => {
   const next = isDark() ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem(THEME, next); } catch { /* this visit only */ }
+  try {
+    localStorage.setItem(THEME, next);
+  } catch {
+    /* this visit only */
+  }
   showThemeIcon();
 });
 systemDark.addEventListener('change', showThemeIcon);

@@ -91,9 +91,14 @@ export function sobel(L, w, h) {
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
       const i = y * w + x;
-      const a = L[i - w - 1], b = L[i - w], c = L[i - w + 1];
-      const d = L[i - 1], f = L[i + 1];
-      const g = L[i + w - 1], hh = L[i + w], k = L[i + w + 1];
+      const a = L[i - w - 1],
+        b = L[i - w],
+        c = L[i - w + 1];
+      const d = L[i - 1],
+        f = L[i + 1];
+      const g = L[i + w - 1],
+        hh = L[i + w],
+        k = L[i + w + 1];
       gx[i] = c + 2 * f + k - (a + 2 * d + g);
       gy[i] = g + 2 * hh + k - (a + 2 * b + c);
     }

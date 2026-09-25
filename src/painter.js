@@ -60,15 +60,24 @@ export async function paint(job) {
   const octx = /** @type {CanvasRenderingContext2D} */ (off.getContext('2d', { willReadFrequently: true }));
   octx.drawImage(image, 0, 0, W, H);
   const px = octx.getImageData(0, 0, W, H).data;
-  const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N), L = new Float32Array(N);
+  const R = new Float32Array(N),
+    G = new Float32Array(N),
+    B = new Float32Array(N),
+    L = new Float32Array(N);
   /** @type {[number, number, number]} */
   const avg = [0, 0, 0];
   for (let i = 0; i < N; i++) {
-    R[i] = px[i * 4] / 255; G[i] = px[i * 4 + 1] / 255; B[i] = px[i * 4 + 2] / 255;
+    R[i] = px[i * 4] / 255;
+    G[i] = px[i * 4 + 1] / 255;
+    B[i] = px[i * 4 + 2] / 255;
     L[i] = 0.3 * R[i] + 0.59 * G[i] + 0.11 * B[i];
-    avg[0] += R[i]; avg[1] += G[i]; avg[2] += B[i];
+    avg[0] += R[i];
+    avg[1] += G[i];
+    avg[2] += B[i];
   }
-  avg[0] /= N; avg[1] /= N; avg[2] /= N;
+  avg[0] /= N;
+  avg[1] /= N;
+  avg[2] /= N;
 
   // --- prepare the canvas with a toned ground
   const canvas = ctx.canvas;
@@ -101,7 +110,9 @@ export async function paint(job) {
 
     // reference: the picture blurred to this brush's scale
     const sig = rad * 0.5;
-    const rr = blur(R, W, H, sig), rg = blur(G, W, H, sig), rb = blur(B, W, H, sig);
+    const rr = blur(R, W, H, sig),
+      rg = blur(G, W, H, sig),
+      rb = blur(B, W, H, sig);
     const [gx, gy] = sobel(blur(L, W, H, sig), W, H);
     const cur = ctx.getImageData(0, 0, W, H).data;
 
@@ -111,14 +122,21 @@ export async function paint(job) {
     const cells = [];
     for (let cy = 0; cy + g <= H; cy += g) {
       for (let cx = 0; cx + g <= W; cx += g) {
-        let sum = 0, best = -1, bi = 0;
+        let sum = 0,
+          best = -1,
+          bi = 0;
         for (let y = cy; y < cy + g; y++) {
           let i = y * W + cx;
           for (let x = 0; x < g; x++, i++) {
-            const dr = rr[i] - cur[i * 4] / 255, dg = rg[i] - cur[i * 4 + 1] / 255, db = rb[i] - cur[i * 4 + 2] / 255;
+            const dr = rr[i] - cur[i * 4] / 255,
+              dg = rg[i] - cur[i * 4 + 1] / 255,
+              db = rb[i] - cur[i * 4 + 2] / 255;
             const e = Math.sqrt(dr * dr + dg * dg + db * db);
             sum += e;
-            if (e > best) { best = e; bi = i; }
+            if (e > best) {
+              best = e;
+              bi = i;
+            }
           }
         }
         if (sum / (g * g) > P.t && (!P.focus || (focus && focus[bi]))) cells.push(bi);
@@ -159,34 +177,52 @@ export async function paint(job) {
 function strokePath(x0, y0, rad, maxLen, c, rr, rg, rb, cur, gx, gy, W, H, flow) {
   /** @type {Array<[number, number]>} */
   const pts = [[x0, y0]];
-  let x = x0, y = y0, ldx = 0, ldy = 0;
+  let x = x0,
+    y = y0,
+    ldx = 0,
+    ldy = 0;
   for (let i = 0; i < maxLen; i++) {
     const i1 = (y | 0) * W + (x | 0);
     if (i > 1) {
-      const dr = rr[i1] - cur[i1 * 4] / 255, dg = rg[i1] - cur[i1 * 4 + 1] / 255, db = rb[i1] - cur[i1 * 4 + 2] / 255;
-      const er = rr[i1] - c[0], eg = rg[i1] - c[1], eb = rb[i1] - c[2];
+      const dr = rr[i1] - cur[i1 * 4] / 255,
+        dg = rg[i1] - cur[i1 * 4 + 1] / 255,
+        db = rb[i1] - cur[i1 * 4 + 2] / 255;
+      const er = rr[i1] - c[0],
+        eg = rg[i1] - c[1],
+        eb = rb[i1] - c[2];
       if (dr * dr + dg * dg + db * db < er * er + eg * eg + eb * eb) break;
     }
-    const gxv = gx[i1], gyv = gy[i1];
+    const gxv = gx[i1],
+      gyv = gy[i1];
     const mag = Math.hypot(gxv, gyv);
     let dx, dy;
     if (mag < 0.004) {
       const a = flow(x, y);
-      dx = Math.cos(a); dy = Math.sin(a);
+      dx = Math.cos(a);
+      dy = Math.sin(a);
     } else {
-      dx = -gyv / mag; dy = gxv / mag;
+      dx = -gyv / mag;
+      dy = gxv / mag;
     }
-    if (ldx * dx + ldy * dy < 0) { dx = -dx; dy = -dy; }
+    if (ldx * dx + ldy * dy < 0) {
+      dx = -dx;
+      dy = -dy;
+    }
     if (i > 0) {
-      dx = 0.6 * dx + 0.4 * ldx; dy = 0.6 * dy + 0.4 * ldy;
+      dx = 0.6 * dx + 0.4 * ldx;
+      dy = 0.6 * dy + 0.4 * ldy;
       const n = Math.hypot(dx, dy) + 1e-6;
-      dx /= n; dy /= n;
+      dx /= n;
+      dy /= n;
     }
-    const nx = x + rad * dx, ny = y + rad * dy;
+    const nx = x + rad * dx,
+      ny = y + rad * dy;
     if (nx < 1 || nx >= W - 1 || ny < 1 || ny >= H - 1) break;
-    x = nx; y = ny;
+    x = nx;
+    y = ny;
     pts.push([x, y]);
-    ldx = dx; ldy = dy;
+    ldx = dx;
+    ldy = dy;
   }
   return pts;
 }

@@ -107,55 +107,67 @@ void main() {
  * @property {number} depth     3D strength as a share of the width; 0 = off.
  */
 
-/** @param {HTMLCanvasElement} canvas */
-export function createViewer(canvas) {
+/**
+ * @param {HTMLCanvasElement} canvas
+ * @param {() => void} [onRestored]  Called when the GPU context comes back after being lost.
+ */
+export function createViewer(canvas, onRestored) {
   const gl = /** @type {WebGLRenderingContext} */ (canvas.getContext('webgl', { preserveDrawingBuffer: true }));
   if (!gl) return null;
 
-  /** @param {number} type @param {string} src */
-  const shader = (type, src) => {
-    const s = /** @type {WebGLShader} */ (gl.createShader(type));
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(String(gl.getShaderInfoLog(s)));
-    return s;
-  };
-  const prog = /** @type {WebGLProgram} */ (gl.createProgram());
-  gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
-  gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
-  gl.linkProgram(prog);
-  gl.useProgram(prog);
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  /** @type {WebGLProgram} */
+  let prog;
   /** @param {string} n */
   const U = (n) => gl.getUniformLocation(prog, n);
-
-  /** @param {number} unit */
-  const texture = (unit) => {
-    const t = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
-    for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
-    gl.uniform1i(U(['u_img', 'u_h', 'u_depth'][unit]), unit);
-    return t;
-  };
-  texture(0); texture(1); texture(2);
   /** @param {number} unit @param {Uint8Array} data @param {number} w @param {number} h */
   const grey = (unit, data, w, h) => {
     gl.activeTexture(gl.TEXTURE0 + unit);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, w, h, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, data);
   };
-  grey(1, new Uint8Array([128]), 1, 1);
-  grey(2, new Uint8Array([128]), 1, 1);
 
-  let W = 1, H = 1, F = 0;
+  // Everything on the GPU is built here, so it can be rebuilt if the browser drops the context
+  // (phones under memory pressure, GPU resets). What was shown is kept to upload again.
+  function init() {
+    /** @param {number} type @param {string} src */
+    const shader = (type, src) => {
+      const sh = /** @type {WebGLShader} */ (gl.createShader(type));
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(String(gl.getShaderInfoLog(sh)));
+      return sh;
+    };
+    prog = /** @type {WebGLProgram} */ (gl.createProgram());
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+    gl.linkProgram(prog);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    for (let unit = 0; unit < 3; unit++) {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+      for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+      gl.uniform1i(U(['u_img', 'u_h', 'u_depth'][unit]), unit);
+    }
+    grey(1, new Uint8Array([128]), 1, 1);
+    grey(2, new Uint8Array([128]), 1, 1);
+  }
+  init();
+
+  let W = 1,
+    H = 1,
+    F = 0,
+    lost = false;
   /** @type {ViewOptions} */
   let opts = { relief: 1.5, frame: true, depth: 0 };
-  let hasDepth = false;
+  /** @type {{painting: HTMLCanvasElement, height: Uint8Array} | null} */
+  let shown = null;
+  /** @type {{data: Uint8Array, width: number, height: number} | null} */
+  let depthMap = null;
 
   function layout() {
     F = opts.frame ? Math.round(Math.min(W, H) * 0.1) : 0;
@@ -166,6 +178,28 @@ export function createViewer(canvas) {
     gl.uniform2f(U('u_size'), canvas.width, canvas.height);
     gl.uniform2f(U('u_px'), 1 / W, 1 / H);
   }
+  function upload() {
+    if (shown) {
+      W = shown.painting.width;
+      H = shown.painting.height;
+      gl.activeTexture(gl.TEXTURE0);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, shown.painting);
+      grey(1, shown.height, W, H);
+    }
+    if (depthMap) grey(2, depthMap.data, depthMap.width, depthMap.height);
+    layout();
+  }
+
+  canvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    lost = true;
+  });
+  canvas.addEventListener('webglcontextrestored', () => {
+    lost = false;
+    init();
+    upload();
+    onRestored?.();
+  });
 
   return {
     /**
@@ -173,22 +207,19 @@ export function createViewer(canvas) {
      * @param {HTMLCanvasElement} painting @param {Uint8Array} height
      */
     setPainting(painting, height) {
-      W = painting.width; H = painting.height;
-      gl.activeTexture(gl.TEXTURE0);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, painting);
-      grey(1, height, W, H);
-      layout();
+      shown = { painting, height };
+      if (!lost) upload();
     },
     /** @param {{data: Uint8Array, width: number, height: number} | null} depth */
     setDepth(depth) {
-      hasDepth = !!depth;
-      if (depth) grey(2, depth.data, depth.width, depth.height);
+      depthMap = depth;
+      if (depth && !lost) grey(2, depth.data, depth.width, depth.height);
     },
     /** @param {Partial<ViewOptions>} next */
     setOptions(next) {
       const frameChanged = next.frame !== undefined && next.frame !== opts.frame;
       opts = { ...opts, ...next };
-      if (frameChanged) layout();
+      if (frameChanged && !lost) layout();
     },
     /** Share of each side taken by the frame, for placing overlays on the painting itself. */
     inset() {
@@ -196,7 +227,8 @@ export function createViewer(canvas) {
     },
     /** @param {number} tx @param {number} ty */
     render(tx, ty) {
-      const depth = hasDepth ? opts.depth : 0;
+      if (lost) return;
+      const depth = depthMap ? opts.depth : 0;
       const focus = 0.4; // this depth stays still; nearer and farther things move in opposite directions
       const reach = depth * Math.max(focus, 1 - focus);
       gl.uniform2f(U('u_tilt'), tx, ty);

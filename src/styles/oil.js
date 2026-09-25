@@ -13,13 +13,20 @@ export const oil = {
     let P = stroke.points;
     if (P.length === 1) {
       const a = flow(P[0][0], P[0][1]);
-      const dx = Math.cos(a) * rad * 0.6, dy = Math.sin(a) * rad * 0.6;
-      P = [[P[0][0] - dx, P[0][1] - dy], [P[0][0] + dx, P[0][1] + dy]];
+      const dx = Math.cos(a) * rad * 0.6,
+        dy = Math.sin(a) * rad * 0.6;
+      P = [
+        [P[0][0] - dx, P[0][1] - dy],
+        [P[0][0] + dx, P[0][1] + dy],
+      ];
     }
     const n = P.length;
     const normals = P.map((_, i) => {
-      const a = P[Math.max(0, i - 1)], b = P[Math.min(n - 1, i + 1)];
-      const tx = b[0] - a[0], ty = b[1] - a[1], l = Math.hypot(tx, ty) + 1e-6;
+      const a = P[Math.max(0, i - 1)],
+        b = P[Math.min(n - 1, i + 1)];
+      const tx = b[0] - a[0],
+        ty = b[1] - a[1],
+        l = Math.hypot(tx, ty) + 1e-6;
       return [-ty / l, tx / l];
     });
 
@@ -30,7 +37,8 @@ export const oil = {
     const skip = 0.03 + 0.12 * params.dry;
 
     // stroke-level colour: slight value and temperature shift, like remixing paint on the brush
-    const v = 1 + gauss(rng) * 0.035, warm = gauss(rng) * 0.012;
+    const v = 1 + gauss(rng) * 0.035,
+      warm = gauss(rng) * 0.012;
     const c = stroke.color;
     const base = [c[0] * v + warm, c[1] * v, c[2] * v - warm];
 
@@ -49,8 +57,10 @@ export const oil = {
         const idx = t * (n - 1);
         const i0 = Math.min(n - 2, Math.max(0, idx | 0));
         const f = idx - i0;
-        const x = P[i0][0] * (1 - f) + P[i0 + 1][0] * f, y = P[i0][1] * (1 - f) + P[i0 + 1][1] * f;
-        const nx = normals[i0][0] * (1 - f) + normals[i0 + 1][0] * f, ny = normals[i0][1] * (1 - f) + normals[i0 + 1][1] * f;
+        const x = P[i0][0] * (1 - f) + P[i0 + 1][0] * f,
+          y = P[i0][1] * (1 - f) + P[i0 + 1][1] * f;
+        const nx = normals[i0][0] * (1 - f) + normals[i0 + 1][0] * f,
+          ny = normals[i0][1] * (1 - f) + normals[i0 + 1][1] * f;
         Q.push([x + nx * off, y + ny * off]);
       }
       ctx.strokeStyle = css(base, 1 + gauss(rng) * 0.05);

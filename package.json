@@ -1,16 +1,36 @@
 {
-  "name": "loose-brush",
+  "name": "impasto",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Repaints any picture as a loose oil sketch, stroke by stroke, in the browser.",
+  "description": "Turn any photo into an oil painting you can tilt in the light. Runs entirely in the browser.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mrmammadov/impasto.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "npx --yes live-server --port=5173 --no-browser",
+    "dev": "esbuild --serve=5173 --servedir=.",
     "build": "node build.mjs",
     "build:min": "node build.mjs --minify",
-    "typecheck": "npx --yes -p typescript tsc -p jsconfig.json --noEmit"
+    "typecheck": "tsc -p jsconfig.json --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:e2e": "playwright test",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9",
+    "typescript": "^5.9.3"
   }
 }

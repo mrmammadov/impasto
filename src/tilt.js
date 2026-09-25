@@ -8,7 +8,12 @@ const clamp1 = (v) => Math.max(-1, Math.min(1, v));
 /** @param {HTMLElement} el */
 export function createTilt(el) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let tx = 0, ty = 0, x = 0, y = 0, over = false, gyro = false;
+  let tx = 0,
+    ty = 0,
+    x = 0,
+    y = 0,
+    over = false,
+    gyro = false;
   /** @type {number | null} */
   let beta0 = null;
   const t0 = performance.now();
@@ -20,7 +25,9 @@ export function createTilt(el) {
     ty = ((e.clientY - r.top) / r.height) * 2 - 1;
     over = true;
   });
-  el.addEventListener('pointerleave', () => { over = false; });
+  el.addEventListener('pointerleave', () => {
+    over = false;
+  });
 
   /** @param {DeviceOrientationEvent} e */
   const onOrient = (e) => {
@@ -41,7 +48,9 @@ export function createTilt(el) {
       try {
         if (DOE && typeof DOE.requestPermission === 'function' && (await DOE.requestPermission()) !== 'granted') return;
         window.addEventListener('deviceorientation', onOrient);
-      } catch { /* no motion access: the pointer and wobble still work */ }
+      } catch {
+        /* no motion access: the pointer and wobble still work */
+      }
     },
     /**
      * Advance one frame. Returns the smoothed tilt and whether it moved enough to redraw.
@@ -53,9 +62,11 @@ export function createTilt(el) {
         tx = reduced ? 0 : Math.sin(t * 0.9) * 0.6;
         ty = reduced ? 0 : Math.sin(t * 0.6 + 1) * 0.35;
       }
-      const nx = x + (tx - x) * 0.12, ny = y + (ty - y) * 0.12;
+      const nx = x + (tx - x) * 0.12,
+        ny = y + (ty - y) * 0.12;
       const moved = Math.abs(nx - x) + Math.abs(ny - y) > 1e-4;
-      x = nx; y = ny;
+      x = nx;
+      y = ny;
       return { x, y, moved };
     },
   };

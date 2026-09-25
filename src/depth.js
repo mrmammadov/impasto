@@ -2,8 +2,10 @@
 // Depth from a single photo, estimated in the browser (Depth Anything V2 small via transformers.js).
 // The model is downloaded on first use only, then cached by the browser. Pictures never leave the device.
 
-const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+// Both pinned to exact versions: a new upstream release can't change or break 3D without a code change here.
+const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
 const MODEL = 'onnx-community/depth-anything-v2-small';
+const MODEL_REVISION = '4472b7362082ad9968fee890ca0f1e5aca36b93d';
 
 /** @type {Promise<any> | null} */
 let estimator = null;
@@ -19,16 +21,26 @@ function load(onProgress) {
       if (e.status !== 'progress') return;
       files[e.file] = e;
       const sum = (/** @type {'loaded' | 'total'} */ k) => Object.values(files).reduce((s, f) => s + (f[k] || 0), 0);
-      onProgress(`Downloading the 3D model (once)… ${Math.round(sum('loaded') / 1e6)} of ${Math.round(sum('total') / 1e6)} MB`);
+      onProgress(
+        `Downloading the 3D model (once)… ${Math.round(sum('loaded') / 1e6)} of ${Math.round(sum('total') / 1e6)} MB`,
+      );
     };
     try {
       if (!(/** @type {any} */ (navigator).gpu)) throw new Error('no WebGPU');
-      return await pipeline('depth-estimation', MODEL, { device: 'webgpu', dtype: 'fp32', progress_callback });
+      return await pipeline('depth-estimation', MODEL, {
+        revision: MODEL_REVISION,
+        device: 'webgpu',
+        dtype: 'fp32',
+        progress_callback,
+      });
     } catch {
-      return await pipeline('depth-estimation', MODEL, { progress_callback }); // CPU fallback, slower
+      // CPU fallback, slower
+      return await pipeline('depth-estimation', MODEL, { revision: MODEL_REVISION, progress_callback });
     }
   })();
-  estimator.catch(() => { estimator = null; }); // allow a retry after a failed download
+  estimator.catch(() => {
+    estimator = null;
+  }); // allow a retry after a failed download
   return estimator;
 }
 

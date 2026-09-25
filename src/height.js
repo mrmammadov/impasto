@@ -23,16 +23,23 @@ export function withHeight(ctx, hctx) {
       if (COLOUR_ONLY.has(/** @type {string} */ (key))) return v.bind(target);
       return (...args) => {
         const r = v.apply(target, args);
-        if (key === 'fillRect' && ground) { ground = false; return r; }
+        if (key === 'fillRect' && ground) {
+          ground = false;
+          return r;
+        }
         hctx[key](...args);
         return r;
       };
     },
     set(target, key, value) {
       target[key] = value;
-      if (key === 'fillStyle') hctx.fillStyle = 'rgb(6,6,6)';            // a slab of paint
-      else if (key === 'strokeStyle') hctx.strokeStyle = 'rgb(3,3,3)';   // one bristle's line
-      else if (key !== 'globalCompositeOperation') hctx[key] = value;
+      if (key === 'fillStyle') {
+        hctx.fillStyle = 'rgb(6,6,6)'; // a slab of paint
+      } else if (key === 'strokeStyle') {
+        hctx.strokeStyle = 'rgb(3,3,3)'; // one bristle's line
+      } else if (key !== 'globalCompositeOperation') {
+        hctx[key] = value;
+      }
       return true;
     },
   });
@@ -45,14 +52,19 @@ export function withHeight(ctx, hctx) {
  * @param {HTMLCanvasElement} c @returns {Uint8Array}
  */
 export function paintTexture(c) {
-  const W = c.width, H = c.height, N = W * H;
+  const W = c.width,
+    H = c.height,
+    N = W * H;
   const d = /** @type {CanvasRenderingContext2D} */ (c.getContext('2d')).getImageData(0, 0, W, H).data;
   let h = new Float32Array(N);
   for (let i = 0; i < N; i++) h[i] = d[i * 4];
   h = blur(h, W, H, 0.8);
   const broad = blur(h, W, H, Math.max(3, (6 * Math.max(W, H)) / 1200));
   let sq = 0;
-  for (let i = 0; i < N; i++) { h[i] -= broad[i]; sq += h[i] * h[i]; }
+  for (let i = 0; i < N; i++) {
+    h[i] -= broad[i];
+    sq += h[i] * h[i];
+  }
   const sd = Math.sqrt(sq / N) || 1;
   const out = new Uint8Array(N);
   for (let i = 0; i < N; i++) out[i] = Math.max(0, Math.min(255, 128 + (h[i] / sd) * 42));
